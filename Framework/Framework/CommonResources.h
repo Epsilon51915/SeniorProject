@@ -30,7 +30,6 @@ struct Vertex
 	glm::vec2 texCoords;
 };
 
-
 // NOTE: Will be changed to be how Vulkan handles the device/logical device, this is a place holder
 struct GpuInfo
 {
@@ -52,7 +51,7 @@ struct alignas(16) textureData
 struct renderSettings
 {
 	AATYPE aatype;
-	uint32_t anistropicLevel; // Double check levels
+	uint32_t anistropicLevel; // TODO: Double check levels
 };
 
 struct textureSettings
@@ -62,10 +61,60 @@ struct textureSettings
 	uint32_t sampleCount;
 };
 
+struct Queue
+{
+	uint32_t familyIndex = 0;
+};
+
+struct Texture
+{
+
+};
+
+struct CommandBuffer
+{
+
+};
+
+struct CommandPool
+{
+
+};
+
+struct RenderView
+{
+
+};
+
+struct RenderingPipeline
+{
+
+};
+
+struct SamplerDescriptorHeap
+{
+
+};
+
 // Memory management
 // Nearly 1-1 from Prototype API from noapi blog post by Sebastian Aaltonen
 // TODO: missing args listed in blog-post, kept missing for now until we have a better idea on implementation
 void* gpuMalloc(size_t bytes);
 void* gpuMalloc(size_t bytes, size_t alignment);
-void gpuFree(void* ptr);
 void* gpuHostToDevicePointer(void* ptr);
+void gpuMemCopy();
+void gpuFree(void* ptr);
+void gpuDispatch();
+
+// Buffer management
+void recordBuffer();
+void submitCommandPool();
+
+
+// Vulkan setup methods
+void findDevice();
+void setupSwapchain();
+void initVulkan();
+
+// Shader management
+void loadShader();
