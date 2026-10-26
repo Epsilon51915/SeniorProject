@@ -4,7 +4,16 @@
 #pragma once
 
 #include <iostream>
+#define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
 #include <glm/glm.hpp>
 
-// TODO: Reference additional headers your program requires here.
+
+
+
+void createWindow();
+void mainLoop();
+void cleanUp();
+
+
+GLFWwindow* window;
