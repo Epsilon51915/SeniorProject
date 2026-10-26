@@ -1,6 +1,12 @@
 {
   "dependencies": [
-    "glfw3",
-    "glm"
+    {
+      "name": "glfw3",
+      "version>=": "3.5.1"
+    },
+    {
+      "name": "glm",
+      "version>=": "1.0.3"
+    }
   ]
 }
