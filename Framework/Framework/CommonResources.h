@@ -11,16 +11,26 @@
 #include <glm/glm.hpp>
 #include <string>
 #include <assert.h>
+#include <vulkan/vulkan_raii.hpp>
+#include <vector>
 
 
 
 
 // enum declarations
-enum AATYPE {MSAA, FXAA, NONE};
+enum PRESENT_MODE
+{
+	IMMEDIATE, FIFO, FIFO_RELAXED, MAILBOX
+};
 
+enum CULL_MODE {
+	NONE, CW, CCW
+};
 
 // Empty handles to be defined somewhere else
 struct RenderView; // May also be called render surface
+
+struct Device;
 
 struct Vertex
 {
@@ -30,9 +40,16 @@ struct Vertex
 	glm::vec2 texCoords;
 };
 
+struct VulkanInfo
+{
+	vk::Instance instance = nullptr;
+	vk::raii::Context context;
+};
+
 // NOTE: Will be changed to be how Vulkan handles the device/logical device, this is a place holder
 struct GpuInfo
 {
+	Device* device = nullptr;
 	std::string name;
 	int totalVRAM;
 	// NOTE: These fields may not be used
@@ -48,11 +65,7 @@ struct alignas(16) textureData
 	glm::float32 invDimensions; // TODO: noapi blog says this should be float32x2, define later as a seperate struct
 };
 
-struct renderSettings
-{
-	AATYPE aatype;
-	uint32_t anistropicLevel; // TODO: Double check levels
-};
+
 
 struct textureSettings
 {
@@ -66,19 +79,20 @@ struct Queue
 	uint32_t familyIndex = 0;
 };
 
-struct Texture
+struct TextureHeap
 {
-
+	uint64_t size = 0;
 };
 
 struct CommandBuffer
 {
-
+	Queue* queue;
+	vk::CommandBuffer commandBuffer;
 };
 
 struct CommandPool
 {
-
+	vk::CommandPool commandPool;
 };
 
 struct RenderView
@@ -86,12 +100,18 @@ struct RenderView
 
 };
 
-struct RenderingPipeline
+
+struct SamplerDescriptorHeap
 {
 
 };
 
-struct SamplerDescriptorHeap
+struct Semaphore
+{
+	vk::Semaphore semaphore;
+};
+
+struct ShaderData
 {
 
 };
@@ -99,12 +119,7 @@ struct SamplerDescriptorHeap
 // Memory management
 // Nearly 1-1 from Prototype API from noapi blog post by Sebastian Aaltonen
 // TODO: missing args listed in blog-post, kept missing for now until we have a better idea on implementation
-void* gpuMalloc(size_t bytes);
-void* gpuMalloc(size_t bytes, size_t alignment);
-void* gpuHostToDevicePointer(void* ptr);
-void gpuMemCopy();
-void gpuFree(void* ptr);
-void gpuDispatch();
+
 
 // Buffer management
 void recordBuffer();
@@ -112,9 +127,37 @@ void submitCommandPool();
 
 
 // Vulkan setup methods
-void findDevice();
-void setupSwapchain();
+
+// Create VkInstance
 void initVulkan();
+// Find device and fill in info
+void findDevice(GpuInfo& info);
+void setupSwapchain();
+
 
 // Shader management
 void loadShader();
+
+// Render Pipeline
+namespace rpl
+{
+	enum AATYPE { MSAA, FXAA, NONE };
+
+	void createRenderPipeline();
+	void addPipelineStage();
+	void createComputePipeline();
+
+	struct renderSettings
+	{
+		AATYPE aatype;
+		uint32_t anistropicLevel; // TODO: Double check levels
+	};
+
+	struct RenderingPipeline
+	{
+		int stages;
+		vk::Pipeline pipeline;
+	};
+
+}
+
