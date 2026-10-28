@@ -92,3 +92,8 @@ Framework/.vs/Framework/v18/Browse.VC.db
 Framework/.vs/Framework/v18/DocumentLayout.backup.json
 Framework/.vs/Framework/v18/DocumentLayout.json
 Framework/.vs/Framework/v18/ipch/AutoPCH/dd6b77029728a4d5/FRAMEWORK.ipch
+*.vsidx
+*.ipch
+*.db-shm
+*.db-wal
+*.opendb

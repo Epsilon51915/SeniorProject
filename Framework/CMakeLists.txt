@@ -14,7 +14,7 @@ list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}/cmake") # Used for find
 
 find_package(glfw3 CONFIG REQUIRED)
 find_package(glm REQUIRED)
-find_package(Vulkan)
+find_package(Vulkan REQUIRED) # Make sure your system environment variables point to your install root
 
 # Create a dummy interface library when C++ 20 module is disabled
 add_library(VulkanCppModule INTERFACE)
