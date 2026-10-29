@@ -1,72 +1,38 @@
 #pragma once
 #include <vulkan/vulkan_raii.hpp>
 #include <vulkan/vulkan.h>
+#include <cassert>
 
 /*
 *	The GPU namespace will contain access to all gpu operations
 *	Kept in a namespace for organizational reasons as making a GPU class is not necessary
+* 
+*	Inherited at Presentation.h where rendering information is given to these methods
+*	TODO: Methods regarding rendering information may need to be moved to presention or some combination of presen.h and gpu.h
+*	TODO: Potentially extend the namespace inside presen.h but it could be gross
+*	TODO: Potentially move _Desc into the rendersettings.h so it can be accessed here and wont need to move GPU methods
 */
 
 
 namespace gpu
 {
-	struct GpuRange
-	{
 
-	};
+	uint32_t frameIndex = 0;
+	struct GpuRange;
 
-	struct GpuHeap
-	{
+	struct GpuHeap;
 
-	};
+	struct Device;
 
-	struct Device
-	{
-		VkDevice device = VK_NULL_HANDLE;
-		VkSurfaceKHR surface = VK_NULL_HANDLE;
-		uint32_t queueCount = 0;
-		uint32_t queueFamilyCount = 0;
-		uint32_t textureMemoryType = VK_MAX_MEMORY_TYPES;
-		uint64_t textureHeapAlignment = 16;
-	};
+	struct Queue;
 
-	struct Queue
-	{
-		VkQueue queue = VK_NULL_HANDLE;
-		uint32_t familyIndex = 0;
-		size_t commandSubmitCap = 0;
-	};
+	struct DeviceCapabilities;
 
-	struct DeviceCapabilities
-	{
-		const char* gpuName;
-		// Queue Capabilities
-		uint32_t queueCount = 0;
-		uint32_t queueGeneralCount = 0;
-		uint32_t queueComputeCount = 0;
-		uint32_t queueTransferCount = 0; //  Also called copy queue in no_api
-	};
-
-	struct GpuTextureSizeAlign
-	{
-		size_t size;
-		size_t align;
-	};
+	struct GpuTextureSizeAlign;
 
 	// bar-for-bar from no-api github
 	// TODO: will probably need to be changed in the future
-	struct PSO
-	{
-		Device* currentState = nullptr;
-		VkPipeline pso = VK_NULL_HANDLE;
-
-		VkPipelineBindPoint bind_point = VK_PIPELINE_BIND_POINT_GRAPHICS;
-
-		~PSO()
-		{
-			if (currentState && pso) vkDestroyPipeline(currentState->device, pso, nullptr);
-		}
-	};
+	struct PSO;
 
 	// GPU memory methods
 	void* gpuMalloc(size_t bytes);
@@ -81,7 +47,7 @@ namespace gpu
 	void gpuDraw();
 	void gpuDrawIndexed();
 
-
+	// Copy methods
 	void copyMemory();
 	void copyMemoryToTexture();
 	void copyTextureToMemory();
@@ -94,4 +60,4 @@ namespace gpu
 	void gpuCreateQueue();
 	void gpuStartCommandRecording(Queue& queue);
 	void gpuSubmitCommandBuffers();
-}
+} // gpu
