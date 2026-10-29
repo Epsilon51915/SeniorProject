@@ -40,24 +40,6 @@ struct Vertex
 	glm::vec2 texCoords;
 };
 
-struct VulkanInfo
-{
-	vk::Instance instance = nullptr;
-	vk::raii::Context context;
-};
-
-// NOTE: Will be changed to be how Vulkan handles the device/logical device, this is a place holder
-struct GpuInfo
-{
-	Device* device = nullptr;
-	std::string name;
-	int totalVRAM;
-	// NOTE: These fields may not be used
-	int numGraphicsQueues;
-	int numComputeQueues;
-	int numTransferQueues;
-};
-
 struct alignas(16) textureData
 {
 	uint32_t srcTextureBase;
@@ -79,10 +61,7 @@ struct Queue
 	uint32_t familyIndex = 0;
 };
 
-struct TextureHeap
-{
-	uint64_t size = 0;
-};
+
 
 struct CommandBuffer
 {
@@ -129,9 +108,6 @@ void submitCommandPool();
 // Vulkan setup methods
 
 // Create VkInstance
-void initVulkan();
-// Find device and fill in info
-void findDevice(GpuInfo& info);
 void setupSwapchain();
 
 

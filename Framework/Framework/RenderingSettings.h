@@ -1,6 +1,9 @@
+#pragma once
+#include <cstdint>
+
 namespace blendsettings
 {
-	enum class BlendFactor
+	enum class BlendFactor: uint8_t
 	{
 		zero,
         one,
@@ -12,16 +15,16 @@ namespace blendsettings
         one_minus_source_alpha,
         destination_alpha,
         one_minus_destination_alpha,
-        source_alpha_saturate,
+        source_alpha_saturate
 	};
 
-    enum class BlendOp
+    enum class BlendOp : uint8_t
     {
         add,
         subtract,
         reverse_subtract,
         minimum,
-        maximum,
+        maximum
     };
 
 }
