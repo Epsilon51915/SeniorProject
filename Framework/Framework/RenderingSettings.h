@@ -28,3 +28,12 @@ namespace blendsettings
     };
 
 }
+
+namespace samplers
+{
+    struct SamplerDesc
+    {
+        uint32_t anistropic = false; // x2 x4 x6 x8
+        bool compare_enabled = false;
+    };
+}

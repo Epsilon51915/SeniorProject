@@ -47,11 +47,36 @@ namespace gpu
 		uint32_t queueTransferCount = 0; //  Also called copy queue in no_api
 	};
 
+	struct GpuTextureSizeAlign
+	{
+		size_t size;
+		size_t align;
+	};
+
+	// bar-for-bar from no-api github
+	// TODO: will probably need to be changed in the future
+	struct PSO
+	{
+		Device* currentState = nullptr;
+		VkPipeline pso = VK_NULL_HANDLE;
+
+		VkPipelineBindPoint bind_point = VK_PIPELINE_BIND_POINT_GRAPHICS;
+
+		~PSO()
+		{
+			if (currentState && pso) vkDestroyPipeline(currentState->device, pso, nullptr);
+		}
+	};
+
+	// GPU memory methods
 	void* gpuMalloc(size_t bytes);
 	void* gpuMalloc(size_t bytes, size_t alignment);
 	void* gpuHostToDevicePointer(void* ptr);
 	void gpuMemCopy();
 	void gpuFree(void* ptr);
+	void gpuSetActiveTextureHeapPtr();
+
+	// GPU drawing methods
 	void gpuDispatch();
 	void gpuDraw();
 	void gpuDrawIndexed();
@@ -60,4 +85,13 @@ namespace gpu
 	void copyMemory();
 	void copyMemoryToTexture();
 	void copyTextureToMemory();
+
+	// Render pass methods
+	void gpuBeginRenderPass();
+	void gpuEndRenderPass();
+
+	// GPU Queue methods
+	void gpuCreateQueue();
+	void gpuStartCommandRecording(Queue& queue);
+	void gpuSubmitCommandBuffers();
 }
