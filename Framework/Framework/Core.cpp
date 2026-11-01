@@ -40,3 +40,8 @@ void initVulkan()
 	vkInstance = vk::raii::Instance(vkContext, createInfo);
 
 }
+
+void createSwapchain()
+{
+
+}
