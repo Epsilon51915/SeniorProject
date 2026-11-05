@@ -3,7 +3,7 @@
 
 #include "Framework.h"
 
-using namespace std;
+using namespace gpu;
 
 int main()
 {
@@ -24,8 +24,8 @@ void mainLoop()
 {
 	while (!glfwWindowShouldClose(window))
 	{
-		glfwSwapBuffers(window);
 		glfwPollEvents();
+		glfwSwapBuffers(window);
 	}
 	cleanUp();
 }

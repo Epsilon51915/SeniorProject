@@ -2,6 +2,7 @@
 
 
 namespace gpu {
+
 	struct GpuRange
 	{
 

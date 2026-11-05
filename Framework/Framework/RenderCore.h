@@ -17,16 +17,15 @@
 namespace gpu
 {
 
-	constexpr int width = 1280;
-	constexpr int height = 720;
+	static constexpr int width = 1280;
+	static constexpr int height = 720;
 
-	uint32_t frameIndex = 0;
-	const uint32_t maxColorAttachments = 1;
-	vk::PresentModeKHR presentMode = vk::PresentModeKHR::eFifo;
-	GLFWwindow* window;
+	static uint32_t frameIndex = 0;
+	static const uint32_t maxColorAttachments = 1;
+	static vk::PresentModeKHR presentMode = vk::PresentModeKHR::eFifo;
+	static GLFWwindow* window;
 
 	const uint32_t maxSwapchainImages = 3;
-
 
 	struct GpuRange;
 
