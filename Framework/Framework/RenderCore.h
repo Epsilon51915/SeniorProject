@@ -10,6 +10,7 @@
 #pragma once
 #include <vulkan/vulkan_raii.hpp>
 #include <vulkan/vulkan.h>
+#include <vulkan/vulkan_core.h>
 #include <GLFW/glfw3.h>
 #include <cassert>
 
@@ -55,6 +56,10 @@ namespace gpu
 	// bar-for-bar from no-api github
 	// TODO: will probably need to be changed in the future
 	struct PSO;
+
+	// Setup
+	void pickPhysicalDevice();
+	bool createDevice();
 
 	// GPU memory methods
 	void* gpuMalloc(size_t bytes);

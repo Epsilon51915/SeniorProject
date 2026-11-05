@@ -17,7 +17,10 @@ namespace gpu {
 	struct Device
 	{
 		VkDevice device = VK_NULL_HANDLE;
+		VkInstance vkInstance = VK_NULL_HANDLE;
 		VkSurfaceKHR surface = VK_NULL_HANDLE;
+
+
 		uint32_t queueCount = 0;
 		uint32_t queueFamilyCount = 0;
 		uint32_t textureMemoryType = VK_MAX_MEMORY_TYPES;
@@ -114,6 +117,49 @@ namespace gpu {
 			if (currentState && pso) vkDestroyPipeline(currentState->device, pso, nullptr);
 		}
 	};
+	
+	// Setup methods
+
+	// Find physical device
+	bool pickPhysicalDevice(VkInstance instance)
+	{
+		uint32_t deviceCount = 0;
+		VkPhysicalDevice devices[5]; // temp max number
+		VkResult physicalDeviceList = vkEnumeratePhysicalDevices(instance, &deviceCount, devices);
+
+		if (physicalDeviceList == VK_INCOMPLETE)
+		{
+			return false;
+		}
+		else
+		{
+			return true;
+		}
+	}
+
+	bool createDevice(Device* device)
+	{
+		// Get extensions
+		VkResult extension = vkEnumerateInstanceExtensionProperties();
+
+		const VkApplicationInfo appInfo
+		{
+			.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO,
+			.pApplicationName  = "Framework",
+			.applicationVersion = VK_MAKE_API_VERSION(1, 0, 0, 0),
+			.pEngineName  = "N/A",
+			.engineVersion = VK_MAKE_API_VERSION(1, 0, 0, 0),
+			.apiVersion = VK_API_VERSION_1_4
+		};
+
+		const VkInstanceCreateInfo instanceInfo
+		{
+			.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO,
+			.pApplicationInfo = &appInfo,
+		};
+
+		return true;
+	}
 
 	// GPU memory methods
 	void* gpuMalloc(size_t bytes)

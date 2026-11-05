@@ -22,6 +22,12 @@ void createWindow()
 
 void mainLoop()
 {
+	Device* device;
+
+	// create command buffers
+	CommandPool* commandPool;
+
+
 	while (!glfwWindowShouldClose(window))
 	{
 		glfwPollEvents();
