@@ -2,11 +2,24 @@
 //
 
 #include "Framework.h"
+#include "Camera.h"
+#include "ECS.h"
 
 using namespace std;
 
+//test ecs declaration
+void testECS();
+//
+
 int main()
 {
+	// Testing if Camera is there w/no frame of reference
+	// Testing ECS w/camera
+	Camera camera;
+std:cout << "Cam" << camera.pos.x << ", " << camera.pos.y << ", " << camera.pos.z << "\n";
+	//
+	testECS();
+	//
 	createWindow();
 	return 0;
 }
@@ -30,6 +43,17 @@ void mainLoop()
 	cleanUp();
 }
 
+//TEST
+// Verify entities can be created
+// Creates instance of ECS registry
+// Tkaes our camera, makes it an entity then outputs its ID for verification
+void testECS() {
+	registry ecs;
+	EntityID cameraEntity = ecs.createEntity();
+	std::cout << "CamID: " << cameraEntity << endl;
+
+}
+//TEST
 
 // Cleanup all GLFW resources and other framework resources
 void cleanUp()
