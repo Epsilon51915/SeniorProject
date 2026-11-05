@@ -57,6 +57,8 @@ namespace gpu
 	// TODO: will probably need to be changed in the future
 	struct PSO;
 
+	struct DesiredFeatures;
+
 	// Setup
 	void pickPhysicalDevice();
 	bool createDevice();

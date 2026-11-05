@@ -118,6 +118,20 @@ namespace gpu {
 		}
 	};
 	
+	// Vulkan features we want to use
+	struct DesiredFeatures
+	{
+		VkPhysicalDeviceFeatures2 core{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2 };
+		VkPhysicalDeviceVulkan11Features vulkan11{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES };
+		VkPhysicalDeviceVulkan12Features vulkan12{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES };
+		VkPhysicalDeviceVulkan13Features vulkan13{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES };
+		VkPhysicalDeviceVulkan14Features vulkan14{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_4_FEATURES };
+		VkPhysicalDeviceDescriptorHeapFeaturesEXT descriptor_heap{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_HEAP_FEATURES_EXT };
+		//VkPhysicalDeviceDeviceAddressCommandsFeaturesKHR address_commands{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DEVICE_ADDRESS_COMMANDS_FEATURES_KHR };
+		VkPhysicalDeviceShaderUntypedPointersFeaturesKHR untyped_pointers{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_UNTYPED_POINTERS_FEATURES_KHR };
+		VkPhysicalDeviceUnifiedImageLayoutsFeaturesKHR unified_image_layouts{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_UNIFIED_IMAGE_LAYOUTS_FEATURES_KHR };
+	};
+
 	// Setup methods
 
 	// Find physical device
@@ -125,9 +139,9 @@ namespace gpu {
 	{
 		uint32_t deviceCount = 0;
 		VkPhysicalDevice devices[5]; // temp max number
-		VkResult physicalDeviceList = vkEnumeratePhysicalDevices(instance, &deviceCount, devices);
+		VkResult physicalResult = vkEnumeratePhysicalDevices(instance, &deviceCount, devices);
 
-		if (physicalDeviceList == VK_INCOMPLETE)
+		if (physicalResult == VK_INCOMPLETE)
 		{
 			return false;
 		}
@@ -140,7 +154,9 @@ namespace gpu {
 	bool createDevice(Device* device)
 	{
 		// Get extensions
-		VkResult extension = vkEnumerateInstanceExtensionProperties();
+		uint32_t extensionCount = 0;
+		VkExtensionProperties extensionProperties[100]; // temp max number
+		VkResult extensionResult = vkEnumerateInstanceExtensionProperties(nullptr, &extensionCount, extensionProperties);
 
 		const VkApplicationInfo appInfo
 		{
