@@ -59,7 +59,7 @@ namespace gpu {
 
 		VkImage images[maxSwapchainImages]{}; // TODO: add max_swapchain_images
 
-		present::RenderView renderViews[maxSwapchainImages]{}; // TODO: add max_swapchain_imagesuint32 image_count = 0;
+		//present::RenderView renderViews[maxSwapchainImages]{}; // TODO: add max_swapchain_imagesuint32 image_count = 0;
 		uint32_t imageIndex = 0;
 		uint32_t width = 0;
 		uint32_t height = 0;
@@ -138,7 +138,7 @@ namespace gpu {
 	}
 
 
-	void gpuBeginRenderPass(CommandBuffer* buffer, const present::RenderingDesc& renderDesc)
+	void gpuBeginRenderPass(CommandBuffer* buffer)
 	{
 
 		VkRenderingInfo renderInfo;
@@ -206,19 +206,40 @@ namespace gpu::present
 	};
 
 
-	struct Stencil;
+	struct Stencil
+	{
 
-	struct DepthStencilDesc;
+	};
 
-	struct BlendDesc;
+	struct DepthStencilDesc
+	{
 
-	struct RasterizerDesc;
+	};
 
-	struct RenderPassDesc;
+	struct BlendDesc 
+	{
 
-	struct RenderingDesc;
+	};
 
-	struct TextureDesc;
+	struct RasterizerDesc
+	{
+
+	};
+
+	struct RenderPassDesc
+	{
+
+	};
+
+	struct RenderingDesc
+	{
+
+	};
+
+	struct TextureDesc
+	{
+
+	};
 
 
 	// Render View methods

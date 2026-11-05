@@ -76,7 +76,7 @@ namespace gpu
 	void copyTextureToMemory();
 
 	// Render pass methods
-	void gpuBeginRenderPass(CommandBuffer* bufferr, const present::RenderingDesc& renderDesc);
+	void gpuBeginRenderPass(CommandBuffer* buffer);
 	void gpuEndRenderPass();
 	void bindPSO();
 
@@ -91,16 +91,9 @@ namespace gpu
 
 namespace gpu::present
 {
-	struct ClearColor
-	{
-		float r = 0.0f;
-		float g = 0.0f;
-		float b = 0.0f;
-		float a = 0.0f;
-	};
+	struct ClearColor;
 
 	struct RenderView;
-
 
 	struct Stencil;
 
