@@ -1,6 +1,4 @@
-#include "GPU.h"
-
-
+#include "RenderCore.h"
 
 
 namespace gpu {
@@ -14,6 +12,7 @@ namespace gpu {
 
 	};
 
+	// Device, or the actual GPU we are interacting with
 	struct Device
 	{
 		VkDevice device = VK_NULL_HANDLE;
@@ -27,6 +26,7 @@ namespace gpu {
 		Swapchain* acquiredSwapChain = nullptr;
 	};
 
+	// The queues that exist on the GPU that handle sending application info into the GPU
 	struct Queue
 	{
 		VkQueue queue = VK_NULL_HANDLE;
@@ -51,6 +51,7 @@ namespace gpu {
 		size_t align;
 	};
 
+	// Series of images of rendered images that will most-likely be presented
 	struct Swapchain
 	{
 		Device* state = nullptr;
@@ -70,6 +71,32 @@ namespace gpu {
 		bool recreate_required = false; //  Happens when resolution changes/minimized or maximized.
 
 		PresentContext* presentContext = nullptr;
+	};
+
+	// Series of commands for the GPU to execute
+	struct CommandBuffer 
+	{
+		Device* state = nullptr;
+		CommandBuffer* next = nullptr;
+		VkCommandPool commandPool = VK_NULL_HANDLE;
+		VkCommandBuffer commandBuffer = VK_NULL_HANDLE;
+		VkCommandBuffer epilogue = VK_NULL_HANDLE;
+		VkQueryPool timestamp_pool = VK_NULL_HANDLE;
+
+		Swapchain* swapchain = nullptr;
+		bool submitted = false;
+		bool has_epilogue = false;
+	};
+
+	// Way to organize buffers into pools
+	struct CommandPool
+	{
+		Device* state = nullptr;
+		VkCommandPool commandPool = VK_NULL_HANDLE;
+		CommandBuffer* first = nullptr;
+		CommandBuffer* last = nullptr;
+		CommandBuffer* nextBuffer = nullptr;
+		bool timestamps = false;
 	};
 
 	// bar-for-bar from no-api github
@@ -116,11 +143,26 @@ namespace gpu {
 
 		VkRenderingInfo renderInfo;
 
+		VkRenderingAttachmentInfo colorAttatchments[maxColorAttachments];
+
+		// Render the info sent to command buffer
 		vkCmdBeginRendering(buffer->commandBuffer, &renderInfo);
+
+	}
+
+	void bindPSO()
+	{
+
+	}
+
+	void gpuEndRenderPass(CommandBuffer* buffer)
+	{
+		vkCmdEndRendering(buffer->commandBuffer);
 	}
 
 	void submitCommands(Device* device, const SubmitDesc& desc, uint32_t queue_index)
 	{
+
 	}
 
 	void submitAndPresent(Device* device, const SubmitDesc& desc)
@@ -146,3 +188,65 @@ namespace gpu {
 
 
 } // gpu
+
+
+namespace gpu::present
+{
+	struct ClearColor
+	{
+		float r = 0.0f;
+		float g = 0.0f;
+		float b = 0.0f;
+		float a = 0.0f;
+	};
+
+	struct RenderView
+	{
+
+	};
+
+
+	struct Stencil;
+
+	struct DepthStencilDesc;
+
+	struct BlendDesc;
+
+	struct RasterizerDesc;
+
+	struct RenderPassDesc;
+
+	struct RenderingDesc;
+
+	struct TextureDesc;
+
+
+	// Render View methods
+	RenderView* createRenderView();
+	void destroyRenderView();
+
+	// Stencil, color blending, and other description methods here
+	void createBlendState();
+	void modifyBlendState();
+	void createRenderPassState();
+	void modifyRenderPassState();
+	void createDepthStencilState();
+	void modifyDepthStencilState();
+} // present
+
+
+namespace gpu::pipeline
+{
+
+} // pipeline
+
+namespace gpu::shader
+{
+
+}  // shader
+
+
+namespace gpu::sync
+{
+	struct TimelinePoint;
+} // sync

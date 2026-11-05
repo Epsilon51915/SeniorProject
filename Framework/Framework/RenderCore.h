@@ -1,29 +1,32 @@
+/*
+*	The most important methods making up the core of the Framework rendering
+*	Namespace GPU are methods relating directly to the GPU such as memory methods and rendering
+*	Namespace Present are methods relating to settings/descriptors for rendering
+*	Namespace Pipeline for methods relating to rendering pipeline
+*	TODO: Currently the pipeline methods/namespace is very strict, develop a flexible system after tech demo
+*/
+
+
 #pragma once
 #include <vulkan/vulkan_raii.hpp>
 #include <vulkan/vulkan.h>
+#include <GLFW/glfw3.h>
 #include <cassert>
-#include "Buffers.h"
-#include "Presentation.h"
-
-/*
-*	The GPU namespace will contain access to all gpu operations
-*	Kept in a namespace for organizational reasons as making a GPU class is not necessary
-* 
-*	Inherited at Presentation.h where rendering information is given to these methods
-*	TODO: Methods regarding rendering information may need to be moved to presention or some combination of presen.h and gpu.h
-*	TODO: Potentially extend the namespace inside presen.h but it could be gross
-*	TODO: Potentially move _Desc into the rendersettings.h so it can be accessed here and wont need to move GPU methods
-*	TODO: Lots of cross-referencing, remember to reorganize
-*/
 
 
 namespace gpu
 {
 
+	constexpr int width = 1280;
+	constexpr int height = 720;
+
 	uint32_t frameIndex = 0;
+	const uint32_t maxColorAttachments = 1;
 	vk::PresentModeKHR presentMode = vk::PresentModeKHR::eFifo;
+	GLFWwindow* window;
 
 	const uint32_t maxSwapchainImages = 3;
+
 
 	struct GpuRange;
 
@@ -42,6 +45,10 @@ namespace gpu
 	struct Swapchain;
 
 	struct Texture;
+
+	struct CommandBuffer;
+
+	struct CommandPool;
 
 	// In no-api this is under gpu::detail namespace
 	struct PresentContext;
@@ -81,3 +88,60 @@ namespace gpu
 	void gpuStartCommandRecording(Queue& queue);
 	void gpuSubmitCommandBuffers();
 } // gpu
+
+namespace gpu::present
+{
+	struct ClearColor
+	{
+		float r = 0.0f;
+		float g = 0.0f;
+		float b = 0.0f;
+		float a = 0.0f;
+	};
+
+	struct RenderView;
+
+
+	struct Stencil;
+
+	struct DepthStencilDesc;
+
+	struct BlendDesc;
+
+	struct RasterizerDesc;
+
+	struct RenderPassDesc;
+
+	struct RenderingDesc;
+
+	struct TextureDesc;
+
+
+	// Render View methods
+	RenderView* createRenderView();
+	void destroyRenderView();
+
+	// Stencil, color blending, and other description methods here
+	void createBlendState();
+	void modifyBlendState();
+	void createRenderPassState();
+	void modifyRenderPassState();
+	void createDepthStencilState();
+	void modifyDepthStencilState();
+} // present
+
+// Variables and methods needed to manage the graphics pipeline
+namespace gpu::pipeline
+{
+
+} // pipeline
+
+namespace gpu::shader
+{
+
+}  // shader
+
+namespace gpu::sync
+{
+	struct TimelinePoint;
+} // sync

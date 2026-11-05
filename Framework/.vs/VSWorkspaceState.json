@@ -14,7 +14,9 @@
   "ExpandedNodes": [
     "",
     "\\cmake",
-    "\\Framework"
+    "\\Framework",
+    "\\Slang Shaders"
   ],
+  "SelectedNode": "\\Framework\\Framework.cpp",
   "PreviewInSolutionExplorer": false
 }
