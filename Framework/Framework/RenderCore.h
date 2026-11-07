@@ -8,29 +8,26 @@
 
 
 #pragma once
-#include <vulkan/vulkan_raii.hpp>
 #include <vulkan/vulkan.h>
-#include <vulkan/vulkan_core.h>
+#include <vulkan/vulkan_enums.hpp>
+#define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
 #include <cassert>
+#include <vector>
+#include <stdexcept>
 
 
 namespace gpu
 {
 
-	static constexpr int width = 1280;
-	static constexpr int height = 720;
 
-	static uint32_t frameIndex = 0;
-	static const uint32_t maxColorAttachments = 1;
-	static vk::PresentModeKHR presentMode = vk::PresentModeKHR::eFifo;
-	static GLFWwindow* window;
-
-	const uint32_t maxSwapchainImages = 3;
+	
 
 	struct GpuRange;
 
 	struct GpuHeap;
+
+	struct DeviceDesc;
 
 	struct Device;
 

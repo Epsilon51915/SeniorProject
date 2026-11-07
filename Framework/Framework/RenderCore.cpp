@@ -3,6 +3,28 @@
 
 namespace gpu {
 
+
+	static constexpr int width = 1280;
+	static constexpr int height = 720;
+
+	static uint32_t frameIndex = 0;
+	static const uint32_t maxColorAttachments = 1;
+	const uint32_t maxSwapchainImages = 3;
+	static VkPresentModeKHR presentMode = VkPresentModeKHR::VK_PRESENT_MODE_FIFO_KHR;
+	GLFWwindow* window;
+
+	// Device property variables
+	// NOTE: Vectors may be better but at this point not really necessary
+	const uint32_t maxDeviceExtensions = 512;
+	const uint32_t maxInstanceExtensions = 512;
+	const uint32_t maxPhysicalDevices  = 5; // Really shouldn't be higher than 2 (in-built GPU, discreet GPU, maybe a second discreet GPU)
+	// Want to see your GPU capabilities? Use this website:
+	// https://vulkan.gpuinfo.org/
+	const uint32_t maxQueueFamilies = 64;
+	const uint32_t queueTypeCount = 3; // noapi only uses 3 queues: Compute, Graphics, Transfer. Later on we will probbaly need more than this
+
+	
+
 	struct GpuRange
 	{
 
@@ -11,6 +33,19 @@ namespace gpu {
 	struct GpuHeap
 	{
 
+	};
+
+	// What we want from our GPU
+	struct DesiredDevice
+	{
+		uint32_t desiredGraphicsQueues = 1; // Graphics(present) must be at least 1
+		uint32_t desiredComputeQueues = 0;
+		uint32_t desiredTransferQueues = 0;
+
+		uint32_t desiredSwapchainImageCount = 2;
+		uint32_t timeStampQueryCount = 256;
+
+		VkColorSpaceKHR colorSpace = VK_COLORSPACE_SRGB_NONLINEAR_KHR;
 	};
 
 	// Device, or the actual GPU we are interacting with
@@ -61,9 +96,9 @@ namespace gpu {
 		Device* state = nullptr;
 		VkSwapchainKHR handle = VK_NULL_HANDLE;
 
-		VkImage images[maxSwapchainImages]{}; // TODO: add max_swapchain_images
+		VkImage images[maxSwapchainImages]{};
 
-		//present::RenderView renderViews[maxSwapchainImages]{}; // TODO: add max_swapchain_imagesuint32 image_count = 0;
+		//present::RenderView renderViews[maxSwapchainImages]{};
 		uint32_t imageIndex = 0;
 		uint32_t width = 0;
 		uint32_t height = 0;
@@ -126,38 +161,174 @@ namespace gpu {
 		VkPhysicalDeviceVulkan12Features vulkan12{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES };
 		VkPhysicalDeviceVulkan13Features vulkan13{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES };
 		VkPhysicalDeviceVulkan14Features vulkan14{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_4_FEATURES };
-		VkPhysicalDeviceDescriptorHeapFeaturesEXT descriptor_heap{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_HEAP_FEATURES_EXT };
-		//VkPhysicalDeviceDeviceAddressCommandsFeaturesKHR address_commands{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DEVICE_ADDRESS_COMMANDS_FEATURES_KHR };
-		VkPhysicalDeviceShaderUntypedPointersFeaturesKHR untyped_pointers{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_UNTYPED_POINTERS_FEATURES_KHR };
-		VkPhysicalDeviceUnifiedImageLayoutsFeaturesKHR unified_image_layouts{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_UNIFIED_IMAGE_LAYOUTS_FEATURES_KHR };
+		VkPhysicalDeviceDescriptorHeapFeaturesEXT descriptorHeap{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_HEAP_FEATURES_EXT };
+		VkPhysicalDeviceDeviceAddressCommandsFeaturesKHR addressCommands{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DEVICE_ADDRESS_COMMANDS_FEATURES_KHR };
+		VkPhysicalDeviceShaderUntypedPointersFeaturesKHR untypedPointers{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_UNTYPED_POINTERS_FEATURES_KHR };
+		VkPhysicalDeviceUnifiedImageLayoutsFeaturesKHR unifiedImageLayouts{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_UNIFIED_IMAGE_LAYOUTS_FEATURES_KHR };
+		VkPhysicalDeviceMeshShaderFeaturesEXT meshShader{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MESH_SHADER_FEATURES_EXT };
+		VkPhysicalDeviceSwapchainMaintenance1FeaturesKHR swapchainMaintenance1{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SWAPCHAIN_MAINTENANCE_1_FEATURES_KHR };
+
+
+		explicit DesiredFeatures(bool presentation, bool includeUnifiedImageLayouts, bool includeAddressCommands)
+		{
+			core.pNext = &vulkan11;
+			vulkan11.pNext = &vulkan12;
+			vulkan12.pNext = &vulkan13;
+			vulkan13.pNext = &vulkan14;
+			vulkan14.pNext = &descriptorHeap;
+			descriptorHeap.pNext = includeAddressCommands ? static_cast<void*>(&addressCommands) : static_cast<void*>(&untypedPointers);
+			addressCommands.pNext = &untypedPointers;
+			untypedPointers.pNext = includeUnifiedImageLayouts ? static_cast<void*>(&unifiedImageLayouts) : static_cast<void*>(&meshShader);
+			unifiedImageLayouts.pNext = &meshShader;
+			meshShader.pNext = presentation ? &swapchainMaintenance1 : nullptr;
+		}
 	};
 
 	// Setup methods
 
+	// Score a candidate physical device, highest scorer is picked. If any part fails, return 0 as the device being checked is unsuitable
+	uint32_t scoreDevice(VkPhysicalDevice device)
+	{
+
+		constexpr const char* required_extensions[]{
+			VK_EXT_DESCRIPTOR_HEAP_EXTENSION_NAME,
+			VK_KHR_SHADER_UNTYPED_POINTERS_EXTENSION_NAME,
+			VK_EXT_MESH_SHADER_EXTENSION_NAME,
+			VK_KHR_SWAPCHAIN_EXTENSION_NAME
+		};
+
+		// Variables for tracking device capabilities
+		uint32_t score = 0;
+		uint32_t extensionCount = 0;
+		uint32_t queueCount = 0;
+		std::vector<VkExtensionProperties> extensionProperties;
+		std::vector<VkQueueFamilyProperties2> queueFamilyProperties;
+		VkPhysicalDeviceProperties2 deviceProperties2;
+		VkPhysicalDeviceFeatures2   deviceCoreFeatures2{.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2 };
+		VkPhysicalDeviceVulkan11Features   deviceVk11Features{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES };
+		VkPhysicalDeviceVulkan12Features   deviceVk12Features{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES };
+		VkPhysicalDeviceVulkan13Features   deviceVk13Features{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES };
+		VkPhysicalDeviceVulkan14Features   deviceVk14Features{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_4_FEATURES };
+		VkPhysicalDeviceDescriptorHeapFeaturesEXT deviceHeapFeatures{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_HEAP_FEATURES_EXT };
+		VkPhysicalDeviceMemoryProperties2 deviceMemProperties{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2 };
+		// NOTE: Despite querying for its support, the variables relating to the extension do not exist
+		// In noapi they dont list it as an enabled extension either
+		// So I am unsure why this is here other than for checking that the current GPU can use this
+		//VkPhysicalDeviceDeviceAddressCommandsFeaturesKHR address_commands{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DEVICE_ADDRESS_COMMANDS_FEATURES_KHR };
+		
+		
+
+		// Struct chaining
+		deviceCoreFeatures2.pNext = &deviceVk11Features;
+		deviceVk11Features.pNext = &deviceVk12Features;
+		deviceVk12Features.pNext = &deviceVk13Features;
+		deviceVk13Features.pNext = &deviceVk14Features;
+		deviceVk14Features.pNext = &deviceHeapFeatures;
+		
+		// Get extensions
+		VkResult extensionResult = vkEnumerateDeviceExtensionProperties(device, nullptr, &extensionCount, extensionProperties.data());
+		if (extensionResult == VK_INCOMPLETE)
+		{
+			return 0;
+		}
+
+		// Get device properties and iterate to find all required properties
+		vkGetPhysicalDeviceProperties2(device, &deviceProperties2);
+		vkGetPhysicalDeviceFeatures2(device, &deviceCoreFeatures2);
+		vkGetPhysicalDeviceMemoryProperties2(device, &deviceMemProperties);
+		
+
+		// If any of these fail, device is not suitable and will score 0
+		const bool requiredFeatures =
+			deviceCoreFeatures2.features.shaderInt16 == VK_TRUE &&
+			deviceCoreFeatures2.features.samplerAnisotropy == VK_TRUE &&
+			deviceCoreFeatures2.features.depthBiasClamp == VK_TRUE &&
+			deviceCoreFeatures2.features.independentBlend == VK_TRUE &&
+			deviceCoreFeatures2.features.fragmentStoresAndAtomics == VK_TRUE &&
+			deviceCoreFeatures2.features.vertexPipelineStoresAndAtomics == VK_TRUE &&
+			deviceCoreFeatures2.features.shaderStorageImageReadWithoutFormat == VK_TRUE &&
+			deviceCoreFeatures2.features.shaderStorageImageWriteWithoutFormat == VK_TRUE &&
+			deviceCoreFeatures2.features.multiDrawIndirect == VK_TRUE &&
+			deviceCoreFeatures2.features.drawIndirectFirstInstance == VK_TRUE &&
+			deviceVk11Features.storageBuffer16BitAccess == VK_TRUE &&
+			deviceVk11Features.storagePushConstant16 == VK_TRUE &&
+			deviceVk11Features.shaderDrawParameters == VK_TRUE &&
+			deviceVk12Features.shaderFloat16 == VK_TRUE &&
+			deviceVk12Features.scalarBlockLayout == VK_TRUE &&
+			deviceVk12Features.bufferDeviceAddress == VK_TRUE &&
+			deviceVk12Features.timelineSemaphore == VK_TRUE &&
+			deviceVk13Features.synchronization2 == VK_TRUE &&
+			deviceVk13Features.dynamicRendering == VK_TRUE &&
+			deviceVk13Features.maintenance4 == VK_TRUE &&
+			deviceVk14Features.maintenance5 == VK_TRUE; // TODO: addressCommands seems to be missing from my Vulkan, fix later
+
+		if (!requiredFeatures)
+		{
+			return 0;
+		}
+
+		// Determine queue count and families, check that needed queues exist
+		vkGetPhysicalDeviceQueueFamilyProperties2(device, &queueCount, queueFamilyProperties.data());
+		for (uint32_t index = 0; index < queueCount; ++index)
+		{
+			if (queueFamilyProperties.at(index).queueFamilyProperties.queueCount == 0)
+				continue;
+
+			const VkFlags queueFlag = queueFamilyProperties.at(index).queueFamilyProperties.queueFlags;
+
+		}
+
+		return score;
+
+	}
+
 	// Find physical device
+	// Refer to inspect_candidate in no_api
 	bool pickPhysicalDevice(VkInstance instance)
 	{
 		uint32_t deviceCount = 0;
-		VkPhysicalDevice devices[5]; // temp max number
-		VkResult physicalResult = vkEnumeratePhysicalDevices(instance, &deviceCount, devices);
+		std::vector<VkPhysicalDevice> devices;
+		uint32_t currentBestScore = 0;
+		VkPhysicalDevice bestDevice;
+		//std::vector<VkPhysicalDevice> deviceList;
+		VkResult physicalDeviceResult = vkEnumeratePhysicalDevices(instance, &deviceCount, devices.data());
 
-		if (physicalResult == VK_INCOMPLETE)
+		if (physicalDeviceResult == VK_INCOMPLETE)
 		{
 			return false;
 		}
-		else
+		
+		// Iterate each device and run check
+		for (const auto& device : devices)
 		{
-			return true;
+			uint32_t currentScore = scoreDevice(device);
+			if (currentScore > currentBestScore) // Stupid check but in theory should work 99% of the time
+			{
+				bestDevice = device;
+				currentBestScore = currentScore;
+			}
 		}
+
+		if (currentBestScore == 0)
+		{
+			throw std::runtime_error("No suitable GPU found! All scored 0!");
+		}
+		
 	}
 
+	// TODO: add if (DEBUG) condition for the validation layer
 	bool createDevice(Device* device)
 	{
 		// Get extensions
 		uint32_t extensionCount = 0;
-		VkExtensionProperties extensionProperties[100]; // temp max number
-		VkResult extensionResult = vkEnumerateInstanceExtensionProperties(nullptr, &extensionCount, extensionProperties);
+		std::vector<VkExtensionProperties> extensions;
+		std::vector<const char*> enabledExtensions;
+		std::vector<const char*> enabledLayers;
+		uint32_t enabledExtensionCount = 0;
+		uint32_t layerCount = 1;
+		VkResult extensionResult = vkEnumerateInstanceExtensionProperties(nullptr, &extensionCount, extensions.data());
 
+		// Create context and instance of VK
 		const VkApplicationInfo appInfo
 		{
 			.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO,
@@ -172,7 +343,30 @@ namespace gpu {
 		{
 			.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO,
 			.pApplicationInfo = &appInfo,
+			.enabledLayerCount = layerCount,
+			.ppEnabledLayerNames = enabledLayers.data(),
+			.enabledExtensionCount = enabledExtensionCount,
+			.ppEnabledExtensionNames = enabledExtensions.data()
 		};
+		VkResult instanceResult = vkCreateInstance(&instanceInfo, nullptr, &device->vkInstance);
+
+		if (instanceResult == VK_INCOMPLETE)
+		{
+			throw std::runtime_error("Failed to create VK Instance!");
+		}
+
+		// Find physical device to use and begin populating the rest of the  Device* device param
+
+		// Queue selection
+
+
+		const VkDeviceCreateInfo deviceInfo
+		{
+			.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
+		};
+
+
+
 
 		return true;
 	}
@@ -245,6 +439,12 @@ namespace gpu {
 
 	}
 	void gpuSubmitCommandBuffers()
+	{
+
+	}
+
+	// Deallocate any allocated resources
+	void cleanup()
 	{
 
 	}
