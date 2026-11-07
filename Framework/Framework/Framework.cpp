@@ -2,11 +2,23 @@
 //
 
 #include "Framework.h"
+#include "Camera.h"
+#include "ECS.h"
 
 using namespace gpu;
 
+//test ecs declaration
+void testECS() {
+	registry ECS;
+	EntityID entity = ECS.createEntity();
+	std::cout << "Entity ID: " << entity << "\n";
+}
+//
+
 int main()
 {
+	// Testing ECS 
+	testECS();
 	createWindow();
 	return 0;
 }
