@@ -4,14 +4,16 @@
 *	Namespace Present are methods relating to settings/descriptors for rendering
 *	Namespace Pipeline for methods relating to rendering pipeline
 *	TODO: Currently the pipeline methods/namespace is very strict, develop a flexible system after tech demo
+*	TODO: Currently no debug method to make it easier, add later
 */
 
 
 #pragma once
 #include <vulkan/vulkan.h>
-#include <vulkan/vulkan_enums.hpp>
+//#include <vulkan/vulkan_enums.hpp>
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
+#include <iostream>
 #include <cassert>
 #include <vector>
 #include <stdexcept>
@@ -19,9 +21,6 @@
 
 namespace gpu
 {
-
-
-	
 
 	struct GpuRange;
 
@@ -57,7 +56,8 @@ namespace gpu
 	struct DesiredFeatures;
 
 	// Setup
-	void pickPhysicalDevice();
+	uint32_t scoreDevice(VkPhysicalDevice device, VkSurfaceKHR surface);
+	void pickPhysicalDevice(VkInstance instance, Device* deviceInfo);
 	bool createDevice();
 
 	// GPU memory methods
@@ -90,6 +90,15 @@ namespace gpu
 	void gpuCreateQueue();
 	void gpuStartCommandRecording(Queue& queue);
 	void gpuSubmitCommandBuffers();
+
+
+	// Cleanup methods
+	void destroyCommandPools();
+	void destroySwapchain();
+	void destroyHeap();
+	void destroyDevice();
+	void cleanup();
+
 } // gpu
 
 namespace gpu::present

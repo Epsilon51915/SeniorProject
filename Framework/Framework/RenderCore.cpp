@@ -21,7 +21,7 @@ namespace gpu {
 	// Want to see your GPU capabilities? Use this website:
 	// https://vulkan.gpuinfo.org/
 	const uint32_t maxQueueFamilies = 64;
-	const uint32_t queueTypeCount = 3; // noapi only uses 3 queues: Compute, Graphics, Transfer. Later on we will probbaly need more than this
+	const uint32_t queueTypeCount = 3; // The 3 queues: Compute, Graphics, Transfer.
 
 	
 
@@ -52,12 +52,20 @@ namespace gpu {
 	struct Device
 	{
 		VkDevice device = VK_NULL_HANDLE;
+		VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
 		VkInstance vkInstance = VK_NULL_HANDLE;
 		VkSurfaceKHR surface = VK_NULL_HANDLE;
 
+		// TODO: Research why noapi doesnt define the .sType for these 2 variables under this comment
+		VkPhysicalDeviceProperties2 deviceProps{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2 };
+		VkPhysicalDeviceMemoryProperties2 deviceMemProps{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2 };
+		VkPhysicalDeviceDescriptorHeapPropertiesEXT deviceHeapProps{.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_HEAP_PROPERTIES_EXT };
+		DeviceCapabilities deviceCaps;
 
+		Queue* queues = nullptr;
 		uint32_t queueCount = 0;
 		uint32_t queueFamilyCount = 0;
+		std::vector<uint32_t> queueFamilies;
 		uint32_t textureMemoryType = VK_MAX_MEMORY_TYPES;
 		uint64_t textureHeapAlignment = 16;
 
@@ -75,13 +83,18 @@ namespace gpu {
 
 	struct DeviceCapabilities
 	{
-		const char* gpuName;
+		const char* gpuName = nullptr;
 		// Queue Capabilities
 		uint32_t queueCount = 0;
 		uint32_t queueGeneralCount = 0;
 		uint32_t queueComputeCount = 0;
 		uint32_t queueTransferCount = 0; //  Also called copy queue in no_api
 		// TODO: add compression texture stuff here if we go that route
+
+		bool textureCompressionBC = false;
+		bool textureCompressionASTC = false;
+		bool storageInputOutput16 = false;
+		bool indirectMeshDraw = false;
 	};
 
 	struct GpuTextureSizeAlign
@@ -187,7 +200,9 @@ namespace gpu {
 	// Setup methods
 
 	// Score a candidate physical device, highest scorer is picked. If any part fails, return 0 as the device being checked is unsuitable
-	uint32_t scoreDevice(VkPhysicalDevice device)
+	// Unlike in noapi, we are going to run with the assumption that we want swapchainMaintenance1
+	// Score mainly determined by imageExtent
+	uint32_t scoreDevice(VkPhysicalDevice device, VkSurfaceKHR surface)
 	{
 
 		constexpr const char* required_extensions[]{
@@ -201,30 +216,17 @@ namespace gpu {
 		uint32_t score = 0;
 		uint32_t extensionCount = 0;
 		uint32_t queueCount = 0;
+		bool hasImageLayourExtension = false;
+		bool hasAddressCommandsExtension = false;
 		std::vector<VkExtensionProperties> extensionProperties;
 		std::vector<VkQueueFamilyProperties2> queueFamilyProperties;
-		VkPhysicalDeviceProperties2 deviceProperties2;
-		VkPhysicalDeviceFeatures2   deviceCoreFeatures2{.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2 };
-		VkPhysicalDeviceVulkan11Features   deviceVk11Features{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES };
-		VkPhysicalDeviceVulkan12Features   deviceVk12Features{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES };
-		VkPhysicalDeviceVulkan13Features   deviceVk13Features{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES };
-		VkPhysicalDeviceVulkan14Features   deviceVk14Features{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_4_FEATURES };
-		VkPhysicalDeviceDescriptorHeapFeaturesEXT deviceHeapFeatures{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_HEAP_FEATURES_EXT };
-		VkPhysicalDeviceMemoryProperties2 deviceMemProperties{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2 };
-		// NOTE: Despite querying for its support, the variables relating to the extension do not exist
-		// In noapi they dont list it as an enabled extension either
-		// So I am unsure why this is here other than for checking that the current GPU can use this
-		//VkPhysicalDeviceDeviceAddressCommandsFeaturesKHR address_commands{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DEVICE_ADDRESS_COMMANDS_FEATURES_KHR };
-		
-		
+		VkPhysicalDeviceProperties2 deviceProperties2{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2 };
 
-		// Struct chaining
-		deviceCoreFeatures2.pNext = &deviceVk11Features;
-		deviceVk11Features.pNext = &deviceVk12Features;
-		deviceVk12Features.pNext = &deviceVk13Features;
-		deviceVk13Features.pNext = &deviceVk14Features;
-		deviceVk14Features.pNext = &deviceHeapFeatures;
-		
+		// Find specific extensions
+
+
+		DesiredFeatures features(surface != VK_NULL_HANDLE, hasImageLayourExtension, hasAddressCommandsExtension);
+
 		// Get extensions
 		VkResult extensionResult = vkEnumerateDeviceExtensionProperties(device, nullptr, &extensionCount, extensionProperties.data());
 		if (extensionResult == VK_INCOMPLETE)
@@ -234,40 +236,47 @@ namespace gpu {
 
 		// Get device properties and iterate to find all required properties
 		vkGetPhysicalDeviceProperties2(device, &deviceProperties2);
-		vkGetPhysicalDeviceFeatures2(device, &deviceCoreFeatures2);
-		vkGetPhysicalDeviceMemoryProperties2(device, &deviceMemProperties);
+		vkGetPhysicalDeviceFeatures2(device, &features.core);
 		
 
 		// If any of these fail, device is not suitable and will score 0
 		const bool requiredFeatures =
-			deviceCoreFeatures2.features.shaderInt16 == VK_TRUE &&
-			deviceCoreFeatures2.features.samplerAnisotropy == VK_TRUE &&
-			deviceCoreFeatures2.features.depthBiasClamp == VK_TRUE &&
-			deviceCoreFeatures2.features.independentBlend == VK_TRUE &&
-			deviceCoreFeatures2.features.fragmentStoresAndAtomics == VK_TRUE &&
-			deviceCoreFeatures2.features.vertexPipelineStoresAndAtomics == VK_TRUE &&
-			deviceCoreFeatures2.features.shaderStorageImageReadWithoutFormat == VK_TRUE &&
-			deviceCoreFeatures2.features.shaderStorageImageWriteWithoutFormat == VK_TRUE &&
-			deviceCoreFeatures2.features.multiDrawIndirect == VK_TRUE &&
-			deviceCoreFeatures2.features.drawIndirectFirstInstance == VK_TRUE &&
-			deviceVk11Features.storageBuffer16BitAccess == VK_TRUE &&
-			deviceVk11Features.storagePushConstant16 == VK_TRUE &&
-			deviceVk11Features.shaderDrawParameters == VK_TRUE &&
-			deviceVk12Features.shaderFloat16 == VK_TRUE &&
-			deviceVk12Features.scalarBlockLayout == VK_TRUE &&
-			deviceVk12Features.bufferDeviceAddress == VK_TRUE &&
-			deviceVk12Features.timelineSemaphore == VK_TRUE &&
-			deviceVk13Features.synchronization2 == VK_TRUE &&
-			deviceVk13Features.dynamicRendering == VK_TRUE &&
-			deviceVk13Features.maintenance4 == VK_TRUE &&
-			deviceVk14Features.maintenance5 == VK_TRUE; // TODO: addressCommands seems to be missing from my Vulkan, fix later
+			features.core.features.shaderInt16 == VK_TRUE &&
+			features.core.features.samplerAnisotropy == VK_TRUE &&
+			features.core.features.depthBiasClamp == VK_TRUE &&
+			features.core.features.independentBlend == VK_TRUE &&
+			features.core.features.fragmentStoresAndAtomics == VK_TRUE &&
+			features.core.features.vertexPipelineStoresAndAtomics == VK_TRUE &&
+			features.core.features.shaderStorageImageReadWithoutFormat == VK_TRUE &&
+			features.core.features.shaderStorageImageWriteWithoutFormat == VK_TRUE &&
+			features.core.features.multiDrawIndirect == VK_TRUE &&
+			features.core.features.drawIndirectFirstInstance == VK_TRUE &&
+			features.vulkan11.storageBuffer16BitAccess == VK_TRUE &&
+			features.vulkan11.storagePushConstant16 == VK_TRUE &&
+			features.vulkan11.shaderDrawParameters == VK_TRUE &&
+			features.vulkan12.shaderFloat16 == VK_TRUE &&
+			features.vulkan12.scalarBlockLayout == VK_TRUE &&
+			features.vulkan12.bufferDeviceAddress == VK_TRUE &&
+			features.vulkan12.timelineSemaphore == VK_TRUE &&
+			features.vulkan13.synchronization2 == VK_TRUE &&
+			features.vulkan13.dynamicRendering == VK_TRUE &&
+			features.vulkan13.maintenance4 == VK_TRUE &&
+			features.vulkan14.maintenance5 == VK_TRUE &&
+			features.descriptorHeap.descriptorHeap == VK_TRUE &&
+			features.untypedPointers.shaderUntypedPointers == VK_TRUE &&
+			features.meshShader.meshShader == VK_TRUE &&
+			(features.core.features.textureCompressionBC == VK_TRUE ||
+				features.core.features.textureCompressionASTC_LDR == VK_TRUE) &&
+			(!surface || features.swapchainMaintenance1.swapchainMaintenance1 == VK_TRUE);
 
 		if (!requiredFeatures)
 		{
+			std::cout << "This device lacked the required features" << std::endl;
 			return 0;
 		}
 
 		// Determine queue count and families, check that needed queues exist
+		bool presentQueueFound = false;
 		vkGetPhysicalDeviceQueueFamilyProperties2(device, &queueCount, queueFamilyProperties.data());
 		for (uint32_t index = 0; index < queueCount; ++index)
 		{
@@ -275,8 +284,44 @@ namespace gpu {
 				continue;
 
 			const VkFlags queueFlag = queueFamilyProperties.at(index).queueFamilyProperties.queueFlags;
+			uint32_t queueType = 0; // 1 = graphics, 2 = compute, 3 = transfer
 
+			if (queueFlag == VK_QUEUE_GRAPHICS_BIT)
+			{
+				queueType = 1;
+			}
+			else if (queueFlag == VK_QUEUE_COMPUTE_BIT)
+			{
+				queueType = 2;
+			}
+			else if (queueFlag == VK_QUEUE_TRANSFER_BIT)
+			{
+				queueType = 3;
+			}
+			else
+			{
+				continue;
+			}
+			// Check surface presentation capability with queue index
+			if (surface && queueType == 1)
+			{
+				VkBool32 presentSupported = VK_TRUE;
+				vkGetPhysicalDeviceSurfaceSupportKHR(device, index, surface, &presentSupported);
+				if (presentSupported == VK_FALSE)
+				{
+					return 0;
+				}
+				presentQueueFound = true;
+			}
 		}
+
+		if (!presentQueueFound)
+		{
+			return 0;
+		}
+
+		// The main determinant of score
+		score += deviceProperties2.properties.limits.maxImageDimension2D;
 
 		return score;
 
@@ -284,7 +329,7 @@ namespace gpu {
 
 	// Find physical device
 	// Refer to inspect_candidate in no_api
-	bool pickPhysicalDevice(VkInstance instance)
+	void pickPhysicalDevice(VkInstance instance, Device* deviceInfo)
 	{
 		uint32_t deviceCount = 0;
 		std::vector<VkPhysicalDevice> devices;
@@ -293,15 +338,16 @@ namespace gpu {
 		//std::vector<VkPhysicalDevice> deviceList;
 		VkResult physicalDeviceResult = vkEnumeratePhysicalDevices(instance, &deviceCount, devices.data());
 
+
 		if (physicalDeviceResult == VK_INCOMPLETE)
 		{
-			return false;
+			throw std::runtime_error("No GPU found in system!");
 		}
 		
 		// Iterate each device and run check
 		for (const auto& device : devices)
 		{
-			uint32_t currentScore = scoreDevice(device);
+			uint32_t currentScore = scoreDevice(device, deviceInfo->surface);
 			if (currentScore > currentBestScore) // Stupid check but in theory should work 99% of the time
 			{
 				bestDevice = device;
@@ -313,11 +359,12 @@ namespace gpu {
 		{
 			throw std::runtime_error("No suitable GPU found! All scored 0!");
 		}
-		
+		deviceInfo->physicalDevice = bestDevice;
 	}
 
 	// TODO: add if (DEBUG) condition for the validation layer
-	bool createDevice(Device* device)
+	// Fill in empty Device struct from trying to initialize Framework
+	bool createDevice(Device* device, const DesiredDevice& desiredDevice)
 	{
 		// Get extensions
 		uint32_t extensionCount = 0;
@@ -338,6 +385,9 @@ namespace gpu {
 			.engineVersion = VK_MAKE_API_VERSION(1, 0, 0, 0),
 			.apiVersion = VK_API_VERSION_1_4
 		};
+		
+
+		// TODO: enable extensions here
 
 		const VkInstanceCreateInfo instanceInfo
 		{
@@ -355,9 +405,49 @@ namespace gpu {
 			throw std::runtime_error("Failed to create VK Instance!");
 		}
 
-		// Find physical device to use and begin populating the rest of the  Device* device param
+		// Find physical device to use and begin populating the rest of the Device* device param
+		// TODO: Get physicalDevice Heap properties
+		pickPhysicalDevice(device->vkInstance, device);
+		vkGetPhysicalDeviceProperties2(device->physicalDevice, &device->deviceProps);
+		vkGetPhysicalDeviceMemoryProperties2(device->physicalDevice, &device->deviceMemProps);
+		
+
+		DesiredFeatures enabledFeatures(true, true, true); // TODO: remove magic boolean
 
 		// Queue selection
+		uint32_t queueCount = 0;
+		std::vector<VkQueueFamilyProperties2> queueFamilyProperties;
+		vkGetPhysicalDeviceQueueFamilyProperties2(device->physicalDevice, &queueCount, queueFamilyProperties.data());
+		// For each found queue family, iterate and get desired queue amount, and assign it to device queue struct
+		const uint32_t requestedQueueCounts[]{ desiredDevice.desiredGraphicsQueues, desiredDevice.desiredComputeQueues, desiredDevice.desiredTransferQueues };
+		uint32_t queueCounts[queueTypeCount];
+		for (uint32_t queueType = 0; queueType < queueCount; ++queueType)
+		{
+			// TODO: Possibly correct logic, debug for sure
+			// NOTE: assign queue counts from requestedQueues[] if lower than the queues in the family we are looking at, otherwise assign queue counts from family if requestedQueues[] is larger
+			queueCounts[queueType] = requestedQueueCounts[queueType] < queueFamilyProperties.at(queueType).queueFamilyProperties.queueCount ? requestedQueueCounts[queueType] : queueFamilyProperties.at(queueType).queueFamilyProperties.queueCount;
+			device->queueCount += queueCounts[queueType];
+		}
+
+
+		float* queuePriorities = new float[device->queueCount];
+		// Assign queue priorities
+		for (uint32_t index = 0; index < device->queueCount; ++index)
+		{
+			queuePriorities[index] = 1.0f;
+		}
+
+		VkDeviceQueueCreateInfo queueInfos[queueTypeCount]{};
+		uint32_t firstQueue = 0;
+		for (uint32_t queueType = 0; queueType < queueTypeCount; ++queueType)
+		{
+			if (queueCounts[queueType] == 0)
+			{
+				std::cout << "Queue family of index: " << queueType << ", doesn't have any queues assigned, ensure this isn't our graphics/present queue!" << std::endl;
+				continue;
+			}
+			device->queueFamilies[device->queueFamilyCount]
+		}
 
 
 		const VkDeviceCreateInfo deviceInfo
