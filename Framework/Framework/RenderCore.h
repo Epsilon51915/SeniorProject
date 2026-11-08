@@ -49,9 +49,7 @@ namespace gpu
 	// In no-api this is under gpu::detail namespace
 	struct PresentContext;
 
-	// bar-for-bar from no-api github
-	// TODO: will probably need to be changed in the future
-	struct PSO;
+
 
 	struct DesiredFeatures;
 
@@ -81,7 +79,7 @@ namespace gpu
 	// Render pass methods
 	void gpuBeginRenderPass(CommandBuffer* buffer);
 	void gpuEndRenderPass();
-	void bindPSO();
+
 
 	void submitCommands(Device* device, const SubmitDesc& desc, uint32_t queue_index); // TODO: Missing semaphores
 	void submitAndPresent(Device* device, const SubmitDesc& desc);
@@ -138,7 +136,23 @@ namespace gpu::present
 // Variables and methods needed to manage the graphics pipeline
 namespace gpu::pipeline
 {
+	struct CustomPipeline;
 
+	struct ShaderStage;
+
+	struct GraphicsPSODesc;
+
+	// bar-for-bar from no-api github
+	// TODO: will probably need to be changed in the future
+	struct PSO;
+
+	struct RasterizationState;
+
+	void bindPSO(CommandBuffer* commands, const PSO* pso);
+
+	PSO* createRasterPSO(Device* device, const ShaderStage& vertStage, const ShaderStage& fragStage, const RasterizationState& rastState);
+
+	PSO* createGraphicsPSO(Device* device, GraphicsPSODesc graphicsDesc);
 } // pipeline
 
 namespace gpu::shader

@@ -151,20 +151,7 @@ namespace gpu {
 		bool timestamps = false;
 	};
 
-	// bar-for-bar from no-api github
-	// TODO: will probably need to be changed in the future
-	struct PSO
-	{
-		Device* currentState = nullptr;
-		VkPipeline pso = VK_NULL_HANDLE;
 
-		VkPipelineBindPoint bind_point = VK_PIPELINE_BIND_POINT_GRAPHICS;
-
-		~PSO()
-		{
-			if (currentState && pso) vkDestroyPipeline(currentState->device, pso, nullptr);
-		}
-	};
 	
 	// Vulkan features we want to use
 	struct DesiredFeatures
@@ -497,11 +484,6 @@ namespace gpu {
 
 	}
 
-	void bindPSO()
-	{
-
-	}
-
 	void gpuEndRenderPass(CommandBuffer* buffer)
 	{
 		vkCmdEndRendering(buffer->commandBuffer);
@@ -611,6 +593,95 @@ namespace gpu::present
 
 namespace gpu::pipeline
 {
+	// My thought process on this(custom and flexible render pipelines):
+	/*
+	*	CustomPipeline will serve as the starting point of a linked list of however many shader stages a user wants
+	*	CustomStage will hold the stage and the pointer to next stage
+	*	a generateCustomPipeline() method will automaically create the needed PSOs for this new pipeline, to which bindPSO can then be used
+	*	Issues with this idea:
+	*		1. In terms of passing in info easily for models and such I am unsure how that will work
+	*		2. Is probably very cumbersome to maintain and keep track of programming wise
+	*		3. The possibly many different implementation problems
+	*	Assumptions that the custom pipeline will (probably) make
+	*		1. The final stage will always present whatever was just rendered
+	*		2. 1st stage will (probably) take vertex information, even if it does nothing with it
+	*	For now these will remain unused, because as of writing, the main goal is to get a triangle to render, not create 
+	*	the ability for an entire custom render pipeline
+	*	
+	*	Note in issue 1: command buffers probably handle this issue to some extent, research on the Vulkan command pools/buffers definitely needed
+	*	
+	*	As an extra little theory, in multiple or 1 custom pipeline, you can have 1 stage point to 2 separate stages, and potentially merge back into the pipeline at some point
+	*	This would allow for any non-sense combination of pipeline stages with however many different render settings/combinations a user could want
+	*	How to implement this, not sure.
+	*/
+	struct CustomPipeline
+	{
+		ShaderStage* firstStage = nullptr;
+		uint32_t numStages = 0;
+
+		bool addStage();
+	};
+
+	struct CustomStage
+	{
+		ShaderStage stage = {};
+		ShaderStage* nextStage = nullptr;
+		ShaderStage* sideStage = nullptr;
+	};
+
+	struct ShaderStage
+	{
+		const char* stageName = nullptr;
+		const char* entryPoint = nullptr;
+		// NOTE: noapi states threadgroups variable is for Metal
+
+		std::vector<char> code;
+	};
+
+	struct GraphicsPSODesc
+	{
+		ShaderStage vertex = {};
+		ShaderStage fragment = {};
+	};
+
+	// bar-for-bar from no-api github
+	// TODO: will probably need to be changed in the future
+	struct PSO
+	{
+		Device* currentState = nullptr;
+		VkPipeline pso = VK_NULL_HANDLE;
+
+		VkPipelineBindPoint bindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+
+		~PSO()
+		{
+			if (currentState && pso) vkDestroyPipeline(currentState->device, pso, nullptr);
+		}
+	};
+
+	struct RasterState
+	{
+
+	};
+
+	void bindPSO(CommandBuffer* commands, const PSO* pso)
+	{
+		vkCmdBindPipeline(commands->commandBuffer, pso->bindPoint, pso->pso);
+	}
+
+	PSO* createRasterPSO(Device* device, const ShaderStage& vertStage, const ShaderStage& fragStage, const RasterizationState& rastState))
+	{
+		const VkShaderModuleCreateInfo vertexInfo;
+		const VkShaderModuleCreateInfo fragInfo;
+
+
+		return nullptr;
+	}
+
+	PSO* createGraphicsPSO(Device* device, GraphicsPSODesc graphicsDesc)
+	{
+
+	}
 
 } // pipeline
 
