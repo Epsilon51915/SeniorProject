@@ -11,7 +11,9 @@ endif()
 
 project ("Framework")
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}/cmake") # Used for finding Vulkan
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}/doctest")
 
+find_package(doctest CONFIG REQUIRED)
 find_package(glfw3 CONFIG REQUIRED)
 find_package(glm REQUIRED)
 find_package(Vulkan REQUIRED) # Make sure your system environment variables point to your install root
@@ -28,4 +30,4 @@ target_compile_definitions(VulkanCppModule
 add_subdirectory ("Framework")
 
 # Note: Wont work under verion CMAKE version 3.13, though we should never be using that anyway
-target_link_libraries("Framework" PRIVATE VulkanCppModule glfw glm::glm)
+target_link_libraries("Framework" PRIVATE VulkanCppModule glfw glm::glm doctest::doctest)

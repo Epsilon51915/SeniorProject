@@ -17,6 +17,6 @@
     "\\Framework",
     "\\Slang Shaders"
   ],
-  "SelectedNode": "\\vcpkg-configuration.json",
+  "SelectedNode": "\\cmake\\FindVulkan.cmake",
   "PreviewInSolutionExplorer": false
 }
