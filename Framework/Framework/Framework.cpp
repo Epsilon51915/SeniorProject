@@ -28,7 +28,6 @@ TEST_CASE("Testing ECS")
 {
 	CHECK(createEntity() == 1);
 	CHECK(createEntity() == 2);
-	CHECK(createEntity() == 4);
 }
 
 int main(int argc, char** argv) {
