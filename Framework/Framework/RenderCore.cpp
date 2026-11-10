@@ -16,7 +16,7 @@ namespace gpu {
 	static const uint32_t maxColorAttachments = 1;
 	const uint32_t maxSwapchainImages = 3;
 	static VkPresentModeKHR presentMode = VkPresentModeKHR::VK_PRESENT_MODE_FIFO_KHR;
-	GLFWwindow* window;
+	
 
 	// Device property variables
 	// NOTE: Vectors may be better but at this point not really necessary
@@ -50,6 +50,7 @@ namespace gpu {
 	// What we want from our GPU
 	struct DesiredDevice
 	{
+		//void* window = nullptr;
 		uint32_t desiredGraphicsQueues = 1; // Graphics(present) must be at least 1
 		uint32_t desiredComputeQueues = 0;
 		uint32_t desiredTransferQueues = 0;
@@ -58,6 +59,8 @@ namespace gpu {
 		uint32_t timeStampQueryCount = 256;
 
 		VkColorSpaceKHR colorSpace = VK_COLORSPACE_SRGB_NONLINEAR_KHR;
+
+		DesiredDevice() = default;
 	};
 
 	// Device, or the actual GPU we are interacting with
@@ -86,6 +89,12 @@ namespace gpu {
 
 		Swapchain* swapChain = nullptr;
 		Swapchain* acquiredSwapChain = nullptr;
+
+		PresentContext presentContexts[maxSwapchainImages]{};
+		uint32_t presentContextCount = 0;
+		uint32_t nextPresentContext = 0;
+
+		DeviceFunctions fn;
 	};
 
 	// The queues that exist on the GPU that handle sending application info into the GPU
@@ -135,7 +144,8 @@ namespace gpu {
 		VkCompositeAlphaFlagBitsKHR compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
 		CommandBuffer* transitionCommands = nullptr;
 		bool acquired = false;
-		bool recreate_required = false; //  Happens when resolution changes/minimized or maximized.
+		bool recreateRequired = false; //  Happens when resolution changes/minimized or maximized.
+		bool initialized[maxSwapchainImages]{};
 
 		PresentContext* presentContext = nullptr;
 	};
@@ -209,6 +219,57 @@ namespace gpu {
 			meshShader.pNext = presentation ? &swapchainMaintenance1 : nullptr;
 		}
 	};
+
+	struct Viewport
+	{
+		float x = 0.0f;
+		float y = 0.0f;
+		float width = 1.0f;
+		float height = 1.0f;
+		float min_depth = 0.0f;
+		float max_depth = 1.0f;
+	};
+	struct Scissor
+	{
+		int32_t x = 0;
+		int32_t y = 0;
+		uint32_t width = 1;
+		uint32_t height = 1;
+	};
+	struct StencilFaceState
+	{
+		CompareOp compare = CompareOp::always;
+		StencilOp fail = StencilOp::keep;
+		StencilOp pass = StencilOp::keep;
+		StencilOp depth_fail = StencilOp::keep;
+		uint8_t reference = 0;
+	};
+	// TODO: in createDevice this needs to have all of its commands filled
+	struct DeviceFunctions
+	{
+		PFN_vkWriteSamplerDescriptorsEXT writeSamplerDescriptors = nullptr;
+		PFN_vkWriteResourceDescriptorsEXT writeResourceDescriptors = nullptr;
+		PFN_vkCmdBindSamplerHeapEXT cmdBindSamplerHeap = nullptr;
+		PFN_vkCmdBindResourceHeapEXT cmdBindTextureHeap = nullptr;
+		PFN_vkCmdPushDataEXT cmdPushData = nullptr;
+		PFN_vkCmdBindIndexBuffer3KHR cmdBindIndexBuffer = nullptr;
+		PFN_vkCmdDrawIndirect2KHR cmdDrawIndirect = nullptr;
+		PFN_vkCmdDrawIndexedIndirect2KHR cmdDrawIndexedIndirect = nullptr;
+		PFN_vkCmdDispatchIndirect2KHR cmdDispatchIndirect = nullptr;
+		PFN_vkCmdDrawMeshTasksEXT cmdDrawMeshTasks = nullptr;
+		PFN_vkCmdDrawMeshTasksIndirect2EXT cmdDrawMeshTasksIndirect = nullptr;
+		PFN_vkCmdDrawMeshTasksIndirectEXT cmdDrawMeshTasksIndirectBuffer = nullptr;
+		PFN_vkCmdCopyMemoryKHR cmdCopyMemory = nullptr;
+		PFN_vkCmdCopyMemoryToImageKHR cmdCopyMemoryToImage = nullptr;
+		PFN_vkCmdCopyImageToMemoryKHR cmdCopyImageToMemory = nullptr;
+	};
+
+	template<typename T>
+	T loadDeviceProc(VkDevice device, const char* name)
+	{
+		const PFN_vkVoidFunction proc = vkGetDeviceProcAddr(device, name);
+		return reinterpret_cast<T>(proc);
+	}
 
 	// Setup methods
 
@@ -377,7 +438,7 @@ namespace gpu {
 
 	// TODO: add if (DEBUG) condition for the validation layer
 	// Fill in empty Device struct from trying to initialize Framework
-	bool createDevice(Device* device, const DesiredDevice& desiredDevice)
+	bool createDevice(Device* device, const DesiredDevice& desiredDevice, GLFWwindow* window)
 	{
 		// Get extensions
 		const bool presentation = true;
@@ -400,7 +461,9 @@ namespace gpu {
 		};
 		
 
-		// TODO: enable instance extensions here
+		// TODO: enable instance extensions here ALSO GET GLFW EXTENSIONS
+		uint32_t glfwCount = 0;
+		const char** glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwCount);
 		if (presentation)
 		{
 			enabledInstanceExtensions.push_back(VK_EXT_SWAPCHAIN_COLOR_SPACE_EXTENSION_NAME);
@@ -409,6 +472,12 @@ namespace gpu {
 			enabledInstanceExtensions.push_back(VK_KHR_SURFACE_MAINTENANCE_1_EXTENSION_NAME);
 			enabledInstanceExtensions.push_back(VK_EXT_SURFACE_MAINTENANCE_1_EXTENSION_NAME);
 		}
+		// Assign GLFW extensions
+		for (int index = 0; index < glfwCount; ++index)
+		{
+			enabledInstanceExtensions.push_back(glfwExtensions[index]);
+		}
+
 
 		// Enable validation layer if debugging
 		if (enableValidationLayers)
@@ -438,7 +507,12 @@ namespace gpu {
 		vkGetPhysicalDeviceProperties2(device->physicalDevice, &device->deviceProps);
 		vkGetPhysicalDeviceMemoryProperties2(device->physicalDevice, &device->deviceMemProps);
 
-		
+		// Create surface for GLFW
+		VkResult surfaceResult = glfwCreateWindowSurface(device->vkInstance, window, nullptr, &device->surface);
+		if (surfaceResult != VK_SUCCESS)
+		{
+			throw std::runtime_error("Failure to create window surface");
+		}
 		
 
 		DesiredFeatures enabledFeatures(presentation, true, true); // TODO: remove magic boolean
@@ -475,6 +549,8 @@ namespace gpu {
 		enabledFeatures.meshShader.taskShader = VK_TRUE;
 		enabledFeatures.meshShader.meshShader = VK_TRUE;
 		enabledFeatures.swapchainMaintenance1.swapchainMaintenance1 = VK_TRUE;
+
+		device->fn.cmdPushData = loadDeviceProc<PFN_vkCmdPushDataEXT>(device->device, "vkCmdPushDataEXT");
 
 		// Queue selection
 		uint32_t queueCount = 0;
@@ -801,35 +877,67 @@ namespace gpu {
 		vkCmdPipelineBarrier2(commandBuffer, &dependency);
 	}
 
-	void gpuBeginRenderPass(CommandBuffer* buffer)
+	void gpuBeginRenderPass(CommandBuffer* buffer, const present::RenderingDesc& desc, RenderingFlags flags)
 	{
+
+		const present::RenderView* areaView = desc.colors.size() ? desc.colors.at(0).renderView
+			: (desc.depth.renderView ? desc.depth.renderView : desc.stencil.renderView);
+
 		VkRenderingAttachmentInfo colorAttatchments[maxColorAttachments];
 		for (size_t index = 0; index < maxColorAttachments; ++index)
 		{
+			const present::ColorAttachment& attachment = desc.colors.at(index);
 			colorAttatchments[index] = {
 				.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
-				.imageView = attachment.render_view->view,
+				.imageView = attachment.renderView->view,
 				.imageLayout = VK_IMAGE_LAYOUT_GENERAL,
 				.loadOp = static_cast<VkAttachmentLoadOp>(attachment.load),
 				.storeOp = static_cast<VkAttachmentStoreOp>(attachment.store),
 				.clearValue = {
 					.color = {
-						.float32 = { attachment.clear.x, attachment.clear.y, attachment.clear.z, attachment.clear.w },
+						.float32 = { attachment.clear.r, attachment.clear.g, attachment.clear.b, attachment.clear.a },
 					},
 				},
 			};
 		}
+
+		const VkRenderingAttachmentInfo depthAttachment{
+			.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+			.imageView = desc.depth.renderView ? desc.depth.renderView->view : VK_NULL_HANDLE,
+			.imageLayout = VK_IMAGE_LAYOUT_GENERAL,
+			.loadOp = static_cast<VkAttachmentLoadOp>(desc.depth.load),
+			.storeOp = static_cast<VkAttachmentStoreOp>(desc.depth.store),
+			.clearValue = {
+				.depthStencil = {
+					.depth = desc.depth.clear,
+				},
+			},
+		};
+		const VkRenderingAttachmentInfo stencilAttachment{
+			.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+			.imageView = desc.stencil.renderView ? desc.stencil.renderView->view : VK_NULL_HANDLE,
+			.imageLayout = VK_IMAGE_LAYOUT_GENERAL,
+			.loadOp = static_cast<VkAttachmentLoadOp>(desc.stencil.load),
+			.storeOp = static_cast<VkAttachmentStoreOp>(desc.stencil.store),
+			.clearValue = {
+				.depthStencil = {
+					.stencil = desc.stencil.clear,
+				},
+			},
+		};
+
+
 		const VkRenderingInfo renderingInfo{
 			.sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
 			.flags = static_cast<VkRenderingFlags>(flags),
 			.renderArea = {
-				.extent = { .width = area_view->width, .height = area_view->height },
+				.extent = { .width = areaView->width, .height = areaView->height },
 			},
 			.layerCount = 1,
-			.colorAttachmentCount = static_cast<uint32>(desc.colors.size),
-			.pColorAttachments = color_attachments,
-			.pDepthAttachment = desc.depth.render_view ? &depth_attachment : nullptr,
-			.pStencilAttachment = desc.stencil.render_view ? &stencil_attachment : nullptr,
+			.colorAttachmentCount = static_cast<uint32_t>(desc.colors.size()),
+			.pColorAttachments = colorAttatchments,
+			.pDepthAttachment = desc.depth.renderView ? &depthAttachment : nullptr,
+			.pStencilAttachment = desc.stencil.renderView ? &stencilAttachment : nullptr,
 		};
 
 		
@@ -837,6 +945,9 @@ namespace gpu {
 		// Render the info sent to command buffer
 		vkCmdBeginRendering(buffer->commandBuffer, &renderingInfo);
 
+		setViewport(buffer, { .width = static_cast<float>(areaView->width), .height = static_cast<float>(areaView->height) });
+		setScissor(buffer, { .width = areaView->width, .height = areaView->height });
+		setDepthStencil(buffer, {});
 	}
 
 	void gpuEndRenderPass(CommandBuffer* buffer)
@@ -844,12 +955,12 @@ namespace gpu {
 		vkCmdEndRendering(buffer->commandBuffer);
 	}
 
-	void submitCommands(Device* device, const SubmitDesc& desc, uint32_t queue_index)
+	void submitCommands(Device* device, const present::SubmitDesc& desc, uint32_t queue_index, VkSemaphore wait_semaphore, VkSemaphore signal_semaphore)
 	{
 
 	}
 
-	void submitAndPresent(Device* device, const SubmitDesc& desc)
+	void submitAndPresent(Device* device, const present::SubmitDesc& desc)
 	{
 		Swapchain* currentChain = device->swapChain;
 
@@ -877,6 +988,94 @@ namespace gpu {
 	}
 
 
+	bool swapchainSurfaceConfigurationChanged(const Swapchain& swapchain)
+	{
+		VkSurfaceCapabilitiesKHR surfaceCapabilities{};
+		VkResult getCapsResults = vkGetPhysicalDeviceSurfaceCapabilitiesKHR(swapchain.state->physicalDevice, swapchain.state->surface, &surfaceCapabilities);
+
+
+		const VkExtent2D extent = surfaceCapabilities.currentExtent;
+		const uint32_t variable_extent = UINT_MAX;
+		return extent.width == variable_extent ||
+			extent.height == variable_extent ||
+			extent.width != swapchain.width ||
+			extent.height != swapchain.height ||
+			surfaceCapabilities.currentTransform != swapchain.transform ||
+			chooseCompositeAlpha(surfaceCapabilities.supportedCompositeAlpha) != swapchain.compositeAlpha;
+	}
+
+	VkCompositeAlphaFlagBitsKHR chooseCompositeAlpha(VkCompositeAlphaFlagsKHR supported)
+	{
+		constexpr VkCompositeAlphaFlagBitsKHR choices[]{
+			VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
+			VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR,
+			VK_COMPOSITE_ALPHA_POST_MULTIPLIED_BIT_KHR,
+			VK_COMPOSITE_ALPHA_INHERIT_BIT_KHR,
+		};
+		for (VkCompositeAlphaFlagBitsKHR choice : choices)
+		{
+			if ((supported & choice) != 0)
+				return choice;
+		}
+		return static_cast<VkCompositeAlphaFlagBitsKHR>(0);
+	}
+
+	void setViewport(CommandBuffer* commands, const Viewport& viewport)
+	{
+		const VkViewport vk_viewport{
+			.x = viewport.x,
+			.y = viewport.y,
+			.width = viewport.width,
+			.height = viewport.height,
+			.minDepth = viewport.min_depth,
+			.maxDepth = viewport.max_depth,
+		};
+		vkCmdSetViewportWithCount(commands->commandBuffer, 1, &vk_viewport);
+	}
+
+	void setScissor(CommandBuffer* commands, const Scissor& scissor)
+	{
+		const VkRect2D vk_scissor{
+			.offset = { .x = scissor.x, .y = scissor.y },
+			.extent = { .width = scissor.width, .height = scissor.height },
+		};
+		vkCmdSetScissorWithCount(commands->commandBuffer, 1, &vk_scissor);
+	}
+
+	void setDepthStencil(CommandBuffer* commands, const present::DepthStencilState& state)
+	{
+		vkCmdSetDepthTestEnable(commands->commandBuffer, state.depthTest);
+		if (state.depthTest)
+		{
+			vkCmdSetDepthWriteEnable(commands->commandBuffer, state.depthWrite);
+			vkCmdSetDepthCompareOp(commands->commandBuffer, static_cast<VkCompareOp>(state.depth_compare));
+		}
+		vkCmdSetStencilTestEnable(commands->commandBuffer, state.stencil_test);
+		if (!state.stencil_test)
+			return;
+
+		vkCmdSetStencilOp(commands->commandBuffer, VK_STENCIL_FACE_FRONT_BIT,
+			static_cast<VkStencilOp>(state.front.fail), static_cast<VkStencilOp>(state.front.pass),
+			static_cast<VkStencilOp>(state.front.depth_fail), static_cast<VkCompareOp>(state.front.compare));
+		vkCmdSetStencilOp(commands->commandBuffer, VK_STENCIL_FACE_BACK_BIT,
+			static_cast<VkStencilOp>(state.back.fail), static_cast<VkStencilOp>(state.back.pass),
+			static_cast<VkStencilOp>(state.back.depth_fail), static_cast<VkCompareOp>(state.back.compare));
+		vkCmdSetStencilCompareMask(commands->commandBuffer, VK_STENCIL_FACE_FRONT_AND_BACK, state.stencil_read_mask);
+		vkCmdSetStencilWriteMask(commands->commandBuffer, VK_STENCIL_FACE_FRONT_AND_BACK, state.stencil_write_mask);
+		vkCmdSetStencilReference(commands->commandBuffer, VK_STENCIL_FACE_FRONT_BIT, state.front.reference);
+		vkCmdSetStencilReference(commands->commandBuffer, VK_STENCIL_FACE_BACK_BIT, state.back.reference);
+	}
+
+	void emit_root_pointer(CommandBuffer* commands, const void* root)
+	{
+		if (!root) return;
+		const VkPushDataInfoEXT info{
+			.sType = VK_STRUCTURE_TYPE_PUSH_DATA_INFO_EXT,
+			.data = { .address = &root, .size = sizeof(root) },
+		};
+		commands->state->fn.cmdPushData(commands->commandBuffer, &info);
+	}
+
 } // gpu
 
 
@@ -892,7 +1091,11 @@ namespace gpu::present
 
 	struct RenderView
 	{
-
+		Device* state = nullptr;
+		VkImageView view = VK_NULL_HANDLE;
+		uint32_t width = 0;
+		uint32_t height = 0;
+		bool swapchain_view = false;
 	};
 
 
@@ -901,9 +1104,16 @@ namespace gpu::present
 
 	};
 
-	struct DepthStencilDesc
+	struct DepthStencilState
 	{
-
+		bool depthTest = false;
+		bool depthWrite = false;
+		CompareOp depth_compare = CompareOp::less_equal;
+		bool stencil_test = false;
+		uint8_t stencil_read_mask = 0xff;
+		uint8_t stencil_write_mask = 0xff;
+		StencilFaceState front = {};
+		StencilFaceState back = {};
 	};
 
 	struct BlendDesc 
@@ -916,14 +1126,35 @@ namespace gpu::present
 
 	};
 
-	struct RenderPassDesc
+	struct ColorAttachment
 	{
+		RenderView* renderView = nullptr;
+		LoadOp load = LoadOp::load;
+		StoreOp store = StoreOp::store;
+		ClearColor clear = {};
+	};
 
+	struct DepthAttachment
+	{
+		RenderView* renderView = nullptr;
+		LoadOp load = LoadOp::load;
+		StoreOp store = StoreOp::store;
+		float clear = 1.0f;
+	};
+
+	struct StencilAttachment
+	{
+		RenderView* renderView = nullptr;
+		LoadOp load = LoadOp::load;
+		StoreOp store = StoreOp::store;
+		uint8_t clear = 0;
 	};
 
 	struct RenderingDesc
 	{
-
+		std::vector<const ColorAttachment> colors;
+		DepthAttachment depth = {};
+		StencilAttachment stencil = {};
 	};
 
 	struct TextureDesc
@@ -950,12 +1181,49 @@ namespace gpu::present
 	void modifyRenderPassState();
 	void createDepthStencilState();
 	void modifyDepthStencilState();
-	void submitAndPresent(Device* device, SubmitDesc& desc)
+	void submitAndPresent(Device* device, const SubmitDesc& desc)
 	{
 		Swapchain* swapchain = device->swapChain;
-		PresentContext& context = *swapchain->presentContext;
+		PresentContext& presentContext = *swapchain->presentContext;
 
-		VkResult resetFenceResult = vkResetFences(device->device, 1, &context.presented);
+		VkResult resetFenceResult = vkResetFences(device->device, 1, &presentContext.presented);
+		if (resetFenceResult != VK_SUCCESS)
+		{
+			std::cout << "Failed to reset fence. Error Code: " << resetFenceResult << std::endl;
+		}
+		submitCommands(device, desc, 0, presentContext.acquired, presentContext.rendered);
+
+		swapchain->transitionCommands->swapchain = nullptr;
+		swapchain->transitionCommands = nullptr;
+		swapchain->initialized[swapchain->imageIndex] = true;
+
+		const VkSwapchainPresentFenceInfoKHR fenceInfo{
+			.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_PRESENT_FENCE_INFO_KHR,
+			.swapchainCount = 1,
+			.pFences = &presentContext.presented,
+		};
+		const VkPresentInfoKHR presentInfo{
+			.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
+			.pNext = &fenceInfo,
+			.waitSemaphoreCount = 1,
+			.pWaitSemaphores = &presentContext.rendered,
+			.swapchainCount = 1,
+			.pSwapchains = &swapchain->handle,
+			.pImageIndices = &swapchain->imageIndex,
+		};
+		const VkResult result = vkQueuePresentKHR(device->queues[0].queue, &presentInfo);
+		presentContext.presentPending = true;
+		presentContext.swapchain = swapchain->handle;
+		swapchain->presentContext = nullptr;
+		swapchain->acquired = false;
+		device->acquiredSwapChain = nullptr;
+		device->nextPresentContext = (device->nextPresentContext + 1) % device->presentContextCount;
+		if (result == VK_ERROR_OUT_OF_DATE_KHR)
+			swapchain->recreateRequired = true;
+		else if (result == VK_SUBOPTIMAL_KHR)
+			swapchain->recreateRequired = swapchain->recreateRequired || swapchainSurfaceConfigurationChanged(*swapchain);
+		else if (result != VK_SUCCESS)
+			throw std::runtime_error("FAILED TO PRESENT swapchain images");
 	}
 } // present
 
@@ -1034,11 +1302,18 @@ namespace gpu::pipeline
 
 	};
 
-	std::vector<char*> readShader(std::string fileName, std::string filePath)
+	std::vector<char> readShader(std::string fileName, std::string filePath)
 	{
-		std::vector<char*> results;
-
-		return results;
+		std::ifstream file(fileName, std::ios::ate | std::ios::binary);
+		if (!file.is_open())
+		{
+			throw std::runtime_error("failed to open file!");
+		}
+		std::vector<char> buffer(file.tellg());
+		file.seekg(0, std::ios::beg);
+		file.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
+		file.close();
+		return buffer;
 	}
 
 	void bindPSO(CommandBuffer* commands, const PSO* pso)
@@ -1207,11 +1482,6 @@ namespace gpu::pipeline
 	}
 
 } // pipeline
-
-namespace gpu::shader
-{
-
-}  // shader
 
 
 namespace gpu::sync

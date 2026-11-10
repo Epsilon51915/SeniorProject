@@ -23,6 +23,19 @@ void createWindow()
 void mainLoop()
 {
 	Device* device;
+	DesiredDevice desiredDevice;
+
+	createDevice(device, desiredDevice, window);
+
+	std::vector<char> vertexShader = pipeline::readShader("vert.spv", "");
+	std::vector<char> fragmentShader = pipeline::readShader("frag.spv", "");
+
+	pipeline::GraphicsPSODesc graphicsPSODesc;
+
+
+	pipeline::PSO* trianglePSO = pipeline::createGraphicsPSO(device, );
+
+	sync::TimelinePoint latestCompletion;
 
 	// create command buffers
 	CommandPool* commandPool;

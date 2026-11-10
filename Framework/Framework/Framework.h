@@ -18,4 +18,4 @@ void mainLoop();
 void cleanUp();
 
 
-//GLFWwindow* window;
+GLFWwindow* window;
