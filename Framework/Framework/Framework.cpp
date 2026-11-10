@@ -27,7 +27,6 @@ void mainLoop()
 	// create command buffers
 	CommandPool* commandPool;
 
-
 	while (!glfwWindowShouldClose(window))
 	{
 		glfwPollEvents();

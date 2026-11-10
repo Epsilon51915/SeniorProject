@@ -5,6 +5,7 @@
 *	Namespace Pipeline for methods relating to rendering pipeline
 *	TODO: Currently the pipeline methods/namespace is very strict, develop a flexible system after tech demo
 *	TODO: Currently no debug method to make it easier, add later
+*	TODO: Utilizes a very pointless "presentation" bool I used from noapi, rework to not use this later
 */
 
 
@@ -17,6 +18,7 @@
 #include <cassert>
 #include <vector>
 #include <stdexcept>
+#include <fstream>
 
 
 namespace gpu
@@ -68,13 +70,20 @@ namespace gpu
 
 	// GPU drawing methods
 	void gpuDispatch();
-	void gpuDraw();
+	void draw(CommandBuffer* commands);
 	void gpuDrawIndexed();
+	
 
 	// Copy methods
 	void copyMemory();
 	void copyMemoryToTexture();
 	void copyTextureToMemory();
+
+	// Command Buffer methods
+	CommandBuffer* beginCommands(CommandPool* pool);
+	void resetCommandPool(CommandPool pool);
+	void endCommands(CommandBuffer* buffer);
+	void recordImageBarriers(VkCommandBuffer commandBuffer, const std::vector<VkImageMemoryBarrier2> barriers);
 
 	// Render pass methods
 	void gpuBeginRenderPass(CommandBuffer* buffer);
@@ -119,6 +128,7 @@ namespace gpu::present
 
 	struct TextureDesc;
 
+	struct SubmitDesc;
 
 	// Render View methods
 	RenderView* createRenderView();
@@ -131,6 +141,7 @@ namespace gpu::present
 	void modifyRenderPassState();
 	void createDepthStencilState();
 	void modifyDepthStencilState();
+	void submitAndPresent(Device* device, SubmitDesc& desc);
 } // present
 
 // Variables and methods needed to manage the graphics pipeline
@@ -148,6 +159,8 @@ namespace gpu::pipeline
 
 	struct RasterizationState;
 
+	std::vector<char*> readShader(std::string fileName);
+
 	void bindPSO(CommandBuffer* commands, const PSO* pso);
 
 	PSO* createRasterPSO(Device* device, const ShaderStage& vertStage, const ShaderStage& fragStage, const RasterizationState& rastState);
@@ -162,5 +175,6 @@ namespace gpu::shader
 
 namespace gpu::sync
 {
+	struct TimelineSemaphore;
 	struct TimelinePoint;
 } // sync
