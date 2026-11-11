@@ -1,4 +1,4 @@
-#include "RenderCore.h"
+#include "RenderCore.hpp"
 
 
 namespace gpu {
@@ -47,22 +47,6 @@ namespace gpu {
 
 	};
 
-	// What we want from our GPU
-	struct DesiredDevice
-	{
-		//void* window = nullptr;
-		uint32_t desiredGraphicsQueues = 1; // Graphics(present) must be at least 1
-		uint32_t desiredComputeQueues = 0;
-		uint32_t desiredTransferQueues = 0;
-
-		uint32_t desiredSwapchainImageCount = 2;
-		uint32_t timeStampQueryCount = 256;
-
-		VkColorSpaceKHR colorSpace = VK_COLORSPACE_SRGB_NONLINEAR_KHR;
-
-		DesiredDevice() = default;
-	};
-
 	// Device, or the actual GPU we are interacting with
 	struct Device
 	{
@@ -82,19 +66,39 @@ namespace gpu {
 		uint32_t queueCount = 0;
 		uint32_t queueFamilyCount = 0;
 		uint32_t timestampQueryCount = 0;
-		std::vector<uint32_t> queueFamilies;
+		std::vector<uint32_t> queueFamilies = {};
 		uint32_t textureMemoryType = VK_MAX_MEMORY_TYPES;
 		uint64_t textureHeapAlignment = 16;
 		DeviceCapabilities capabilities;
 
 		Swapchain* swapChain = nullptr;
 		Swapchain* acquiredSwapChain = nullptr;
+		RetiredSwapchain retiredSwapchains[maxSwapchainImages]{};
+		SwapchainDeleteQueue swapchainDeleteQueue;
+		VkSemaphore presentation_retirement = VK_NULL_HANDLE;
+		uint64_t presentationRetirementValue = 0;
+		uint64_t completedPresentationRetirement = 0;
+		uint64_t maxTimelineValueDifference = 0;
+
 
 		PresentContext presentContexts[maxSwapchainImages]{};
 		uint32_t presentContextCount = 0;
 		uint32_t nextPresentContext = 0;
 
 		DeviceFunctions fn;
+		void pollPresentationRetirement();
+		void waitPresentationRetirement(uint64_t value);
+		uint64_t nextPresentationRetirement() noexcept;
+		void waitPresentContext(PresentContext& context) noexcept;
+		void drainContexts() noexcept;
+		void finishPresentContext(PresentContext& context) noexcept;
+		void queueRetiredSwapchain(RetiredSwapchain& retired) noexcept;
+
+		~Device();
+
+		Device() = default;
+		Device(const Device&) = delete;
+		Device& operator=(const Device&) = delete;
 	};
 
 	// The queues that exist on the GPU that handle sending application info into the GPU
@@ -103,6 +107,7 @@ namespace gpu {
 		VkQueue queue = VK_NULL_HANDLE;
 		uint32_t familyIndex = 0;
 		size_t commandSubmitCap = 0;
+		bool timestamps = false;
 	};
 
 	struct DeviceCapabilities
@@ -148,6 +153,7 @@ namespace gpu {
 		bool initialized[maxSwapchainImages]{};
 
 		PresentContext* presentContext = nullptr;
+		
 	};
 
 	// Series of commands for the GPU to execute
@@ -236,14 +242,7 @@ namespace gpu {
 		uint32_t width = 1;
 		uint32_t height = 1;
 	};
-	struct StencilFaceState
-	{
-		CompareOp compare = CompareOp::always;
-		StencilOp fail = StencilOp::keep;
-		StencilOp pass = StencilOp::keep;
-		StencilOp depth_fail = StencilOp::keep;
-		uint8_t reference = 0;
-	};
+
 	// TODO: in createDevice this needs to have all of its commands filled
 	struct DeviceFunctions
 	{
@@ -264,12 +263,82 @@ namespace gpu {
 		PFN_vkCmdCopyImageToMemoryKHR cmdCopyImageToMemory = nullptr;
 	};
 
+	
+
+
+
+	struct RetiredSwapchain
+	{
+		VkSwapchainKHR handle = VK_NULL_HANDLE;
+		VkImageView views[maxSwapchainImages]{};
+		uint32_t viewCount = 0;
+	};
+
 	template<typename T>
 	T loadDeviceProc(VkDevice device, const char* name)
 	{
 		const PFN_vkVoidFunction proc = vkGetDeviceProcAddr(device, name);
 		return reinterpret_cast<T>(proc);
 	}
+
+	struct DeferredSwapchainImage
+	{
+		uint64_t retireValue = 0;
+		VkSwapchainKHR swapchain = VK_NULL_HANDLE;
+		VkImageView view = VK_NULL_HANDLE;
+	};
+
+	struct SwapchainDeleteQueue
+	{
+		void push(uint64_t retireValue, VkSwapchainKHR swapchain, VkImageView view) noexcept
+		{
+			//assert(swapchain && view);
+			if (count == capacity)
+			{
+				const size_t old_size = capacity;
+				capacity = old_size == 0 ? 1 : old_size * 2;
+				entries = static_cast<DeferredSwapchainImage*>(realloc(entries, capacity * sizeof(DeferredSwapchainImage)));
+				for (size_t index = 0; index < first; ++index)
+				{
+					entries[old_size + index] = entries[index];
+					entries[index] = {};
+				}
+			}
+			if (count != 0)
+			{
+				const size_t back = (first + count - 1) % capacity;
+				//assert(entries[back].retireValue <= retire_value &&
+				//	"swapchain deletion retire values must be monotonic");
+			}
+			entries[(first + count) % capacity] = {
+				.retireValue = retireValue,
+				.swapchain = swapchain,
+				.view = view,
+			};
+			++count;
+		}
+
+		void collect(VkDevice device, uint64_t completed_value) noexcept
+		{
+			while (count != 0 && entries[first].retireValue <= completed_value)
+			{
+				const DeferredSwapchainImage& entry = entries[first];
+				const bool final_image = count == 1 || entries[(first + 1) % capacity].swapchain != entry.swapchain;
+				vkDestroyImageView(device, entry.view, nullptr);
+				if (final_image)
+					vkDestroySwapchainKHR(device, entry.swapchain, nullptr);
+				entries[first] = {};
+				first = (first + 1) % capacity;
+				--count;
+			}
+			if (count == 0) first = 0;
+		}
+
+		DeferredSwapchainImage* entries = nullptr;
+		size_t capacity = 0;
+		size_t first = 0;
+		size_t count = 0;
+	};
 
 	// Setup methods
 
@@ -715,9 +784,11 @@ namespace gpu {
 	{
 	}
 
-	void draw(CommandBuffer* commands, const void* root, uint32_t vertexCount)
+	void draw(CommandBuffer* commands, const void* root, uint32_t vertexCount, uint32_t instanceCount, uint32_t firstVertex = 0,
+		uint32_t firstInstance)
 	{
-		vkCmdDraw(commands->commandBuffer, vertexCount, 0, 0, 0);
+		emitRootPointer(commands, root);
+		vkCmdDraw(commands->commandBuffer, vertexCount, instanceCount, firstVertex, firstInstance);
 	}
 
 
@@ -877,7 +948,23 @@ namespace gpu {
 		vkCmdPipelineBarrier2(commandBuffer, &dependency);
 	}
 
-	void gpuBeginRenderPass(CommandBuffer* buffer, const present::RenderingDesc& desc, RenderingFlags flags)
+	CommandPool* createCommandPool(Device* device, uint32_t queueIndex)
+	{
+		CommandPool* pool = new CommandPool{ .state = device, .timestamps = device->queues[queueIndex].timestamps };
+		const VkCommandPoolCreateInfo pool_info{
+			.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+			.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT,
+			.queueFamilyIndex = device->queues[queueIndex].familyIndex,
+		};
+		if (vkCreateCommandPool(device->device, &pool_info, nullptr, &pool->commandPool) != VK_SUCCESS)
+		{
+			delete pool;
+			return nullptr;
+		}
+		return pool;
+	}
+
+	void gpuBeginRenderPass(CommandBuffer* buffer, const present::RenderingDesc& desc, RenderingFlags flags = RenderingFlags::none)
 	{
 
 		const present::RenderView* areaView = desc.colors.size() ? desc.colors.at(0).renderView
@@ -960,12 +1047,12 @@ namespace gpu {
 
 	}
 
-	void submitAndPresent(Device* device, const present::SubmitDesc& desc)
-	{
-		Swapchain* currentChain = device->swapChain;
+	//void submitAndPresent(Device* device, const present::SubmitDesc& desc)
+	//{
+	//	Swapchain* currentChain = device->swapChain;
 
-		PresentContext& context = *currentChain->presentContext;
-	}
+	//	PresentContext& context = *currentChain->presentContext;
+	//}
 
 	// GPU Queue methods
 	void gpuCreateQueue()
@@ -1020,6 +1107,114 @@ namespace gpu {
 		return static_cast<VkCompositeAlphaFlagBitsKHR>(0);
 	}
 
+	SwapchainFrame acquire(CommandBuffer* commands)
+	{
+		Device* device = commands->state;
+
+		return SwapchainFrame();
+	}
+
+	void Device::pollPresentationRetirement()
+	{
+		if (!presentation_retirement || completedPresentationRetirement == presentationRetirementValue)
+			return;
+		uint64_t completed = 0;
+		vkGetSemaphoreCounterValue(device, presentation_retirement, &completed);
+		//assert(completed >= completed_presentation_retirement && completed <= presentation_retirement_value);
+		if (completed == completedPresentationRetirement)
+			return;
+		completedPresentationRetirement = completed;
+		swapchainDeleteQueue.collect(device, completedPresentationRetirement);
+	}
+
+	void Device::waitPresentationRetirement(uint64_t value)
+	{
+		//assert(value <= presentation_retirement_value);
+		if (value <= completedPresentationRetirement)
+		{
+			swapchainDeleteQueue.collect(device, completedPresentationRetirement);
+			return;
+		}
+		const VkSemaphoreWaitInfo wait_info{
+			.sType = VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO,
+			.semaphoreCount = 1,
+			.pSemaphores = &presentation_retirement,
+			.pValues = &value,
+		};
+		vkWaitSemaphores(device, &wait_info, ~uint64_t{ 0 });
+		completedPresentationRetirement = value;
+		swapchainDeleteQueue.collect(device, completedPresentationRetirement);
+	}
+
+	uint64_t Device::nextPresentationRetirement() noexcept
+	{
+		const uint64_t next = presentationRetirementValue + 1;
+		if (next - completedPresentationRetirement > maxTimelineValueDifference)
+		{
+			pollPresentationRetirement();
+			if (next - completedPresentationRetirement > maxTimelineValueDifference)
+				waitPresentationRetirement(next - maxTimelineValueDifference);
+			//assert(next - completedPresentationRetirement <= maxTimelineValueDifference);
+		}
+		presentationRetirementValue = next;
+		return next;
+	}
+
+	void Device::waitPresentContext(PresentContext& context) noexcept
+	{
+		if (!context.presentPending)
+			return;
+		vkWaitForFences(device, 1, &context.presented, VK_TRUE, ~uint64_t{ 0 });
+		context.presentPending = false;
+		finishPresentContext(context);
+	}
+
+	void Device::drainContexts() noexcept
+	{
+		waitPresentationRetirement(presentationRetirementValue);
+		for (uint32_t index = 0; index < presentContextCount; ++index)
+		{
+			waitPresentContext(presentContexts[index]);
+		}
+		for (const RetiredSwapchain& retired : retiredSwapchains)
+		{
+			//assert(!retired.handle);
+		}
+		swapchainDeleteQueue.collect(device, completedPresentationRetirement);
+	}
+
+	void Device::finishPresentContext(PresentContext& context) noexcept
+	{
+		//assert(!context.present_pending && context.swapchain);
+		const VkSwapchainKHR completedSwapchain = context.swapchain;
+		context.swapchain = VK_NULL_HANDLE;
+		for (RetiredSwapchain& retired : retiredSwapchains)
+		{
+			if (retired.handle != completedSwapchain)
+				continue;
+			for (const PresentContext& pending : presentContexts)
+			{
+				if (pending.presentPending && pending.swapchain == completedSwapchain)
+					return;
+			}
+			queueRetiredSwapchain(retired);
+			return;
+		}
+	}
+
+	void Device::queueRetiredSwapchain(RetiredSwapchain& retired) noexcept
+	{
+		//assert(retired.handle && retired.viewCount != 0);
+		for (uint32_t index = 0; index < retired.viewCount; ++index)
+		{
+			const VkImageView view = retired.views[index];
+			//assert(view);
+			swapchainDeleteQueue.push(presentationRetirementValue, retired.handle, view);
+		}
+		retired = {};
+		swapchainDeleteQueue.collect(device, completedPresentationRetirement);
+	}
+
 	void setViewport(CommandBuffer* commands, const Viewport& viewport)
 	{
 		const VkViewport vk_viewport{
@@ -1066,7 +1261,7 @@ namespace gpu {
 		vkCmdSetStencilReference(commands->commandBuffer, VK_STENCIL_FACE_BACK_BIT, state.back.reference);
 	}
 
-	void emit_root_pointer(CommandBuffer* commands, const void* root)
+	void emitRootPointer(CommandBuffer* commands, const void* root)
 	{
 		if (!root) return;
 		const VkPushDataInfoEXT info{
@@ -1081,13 +1276,6 @@ namespace gpu {
 
 namespace gpu::present
 {
-	struct ClearColor
-	{
-		float r = 0.0f;
-		float g = 0.0f;
-		float b = 0.0f;
-		float a = 0.0f;
-	};
 
 	struct RenderView
 	{
@@ -1104,17 +1292,7 @@ namespace gpu::present
 
 	};
 
-	struct DepthStencilState
-	{
-		bool depthTest = false;
-		bool depthWrite = false;
-		CompareOp depth_compare = CompareOp::less_equal;
-		bool stencil_test = false;
-		uint8_t stencil_read_mask = 0xff;
-		uint8_t stencil_write_mask = 0xff;
-		StencilFaceState front = {};
-		StencilFaceState back = {};
-	};
+
 
 	struct BlendDesc 
 	{
@@ -1126,48 +1304,13 @@ namespace gpu::present
 
 	};
 
-	struct ColorAttachment
-	{
-		RenderView* renderView = nullptr;
-		LoadOp load = LoadOp::load;
-		StoreOp store = StoreOp::store;
-		ClearColor clear = {};
-	};
-
-	struct DepthAttachment
-	{
-		RenderView* renderView = nullptr;
-		LoadOp load = LoadOp::load;
-		StoreOp store = StoreOp::store;
-		float clear = 1.0f;
-	};
-
-	struct StencilAttachment
-	{
-		RenderView* renderView = nullptr;
-		LoadOp load = LoadOp::load;
-		StoreOp store = StoreOp::store;
-		uint8_t clear = 0;
-	};
-
-	struct RenderingDesc
-	{
-		std::vector<const ColorAttachment> colors;
-		DepthAttachment depth = {};
-		StencilAttachment stencil = {};
-	};
 
 	struct TextureDesc
 	{
 
 	};
 
-	struct SubmitDesc
-	{
-		std::vector<CommandBuffer* const> commands;
-		std::vector<const sync::TimelinePoint> waits;
-		sync::TimelinePoint completion = {};
-	};
+
 
 
 	// Render View methods
@@ -1267,20 +1410,9 @@ namespace gpu::pipeline
 		ShaderStage* sideStage = nullptr;
 	};
 
-	struct ShaderStage
-	{
-		const char* stageName = nullptr;
-		const char* entryPoint = nullptr;
-		// NOTE: noapi states threadgroups variable is for Metal
 
-		std::vector<char> code;
-	};
 
-	struct GraphicsPSODesc
-	{
-		ShaderStage vertex = {};
-		ShaderStage fragment = {};
-	};
+
 
 	// bar-for-bar from no-api github
 	// TODO: will probably need to be changed in the future
@@ -1486,14 +1618,31 @@ namespace gpu::pipeline
 
 namespace gpu::sync
 {
-	struct TimelineSemaphore
+	TimelineSemaphore* createTimelineSemaphore(Device* device, uint64_t initial_value) noexcept
 	{
-		Device* state = nullptr;
-		VkSemaphore semaphore = VK_NULL_HANDLE;
-	};
-	struct TimelinePoint
+		const VkSemaphoreTypeCreateInfo timeline_info{
+			.sType = VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO,
+			.semaphoreType = VK_SEMAPHORE_TYPE_TIMELINE,
+			.initialValue = initial_value,
+		};
+		const VkSemaphoreCreateInfo create_info{
+			.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
+			.pNext = &timeline_info,
+		};
+		TimelineSemaphore* result = new TimelineSemaphore{
+			.state = device,
+		};
+		if (vkCreateSemaphore(device->device, &create_info, nullptr, &result->semaphore) != VK_SUCCESS)
+		{
+			delete result;
+			return nullptr;
+		}
+		return result;
+	}
+	void waitIdle(Device* device)
 	{
-		TimelineSemaphore* semaphore = nullptr;
-		uint64_t value = 0;
-	};
+		vkDeviceWaitIdle(device->device);
+		device->drainContexts();
+		device->nextPresentContext = 0;
+	}
 } // sync

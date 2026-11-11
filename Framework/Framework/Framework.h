@@ -4,10 +4,7 @@
 #pragma once
 
 #include <iostream>
-// This is needed to tell GLFW we are using Vulkan
-//#define GLFW_INCLUDE_VULKAN
-//#include <GLFW/glfw3.h>
-#include "RenderCore.h"
+#include "RenderCore.hpp"
 
 
 
