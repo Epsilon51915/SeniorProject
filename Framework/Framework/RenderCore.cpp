@@ -465,10 +465,13 @@ namespace gpu
 		uint32_t deviceCount = 0;
 		std::vector<VkPhysicalDevice> devices;
 		uint32_t currentBestScore = 0;
+		VkPhysicalDevice deviceList[5];
 		VkPhysicalDevice bestDevice;
 		//std::vector<VkPhysicalDevice> deviceList;
-		VkResult physicalDeviceResult = vkEnumeratePhysicalDevices(instance, &deviceCount, devices.data());
-
+		VkResult physicalDeviceResult = vkEnumeratePhysicalDevices(instance, &deviceCount, VK_NULL_HANDLE);
+		devices.resize(2);
+		vkEnumeratePhysicalDevices(instance, &deviceCount, devices.data());
+		
 
 		if (physicalDeviceResult != VK_SUCCESS)
 		{
@@ -495,8 +498,10 @@ namespace gpu
 
 	// TODO: add if (DEBUG) condition for the validation layer
 	// Fill in empty Device struct from trying to initialize Framework
-	bool createDevice(Device* device, const DesiredDevice& desiredDevice, GLFWwindow* window)
+	DeviceInit createDevice(const DesiredDevice& desiredDevice, GLFWwindow* window)
 	{
+		Device* device = new Device;
+
 		// Get extensions
 		const bool presentation = true;
 		uint32_t extensionCount = 0;
@@ -520,7 +525,7 @@ namespace gpu
 
 		// TODO: enable instance extensions here ALSO GET GLFW EXTENSIONS
 		uint32_t glfwCount = 0;
-		const char** glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwCount);
+		auto glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwCount);
 		if (presentation)
 		{
 			enabledInstanceExtensions.push_back(VK_EXT_SWAPCHAIN_COLOR_SPACE_EXTENSION_NAME);
@@ -530,6 +535,10 @@ namespace gpu
 			enabledInstanceExtensions.push_back(VK_EXT_SURFACE_MAINTENANCE_1_EXTENSION_NAME);
 		}
 		// Assign GLFW extensions
+		for (int index = 0; index < extensionCount; index++)
+		{
+			enabledInstanceExtensions.push_back(extensions.data()->extensionName);
+		}
 		for (int index = 0; index < glfwCount; ++index)
 		{
 			enabledInstanceExtensions.push_back(glfwExtensions[index]);
@@ -539,17 +548,17 @@ namespace gpu
 		// Enable validation layer if debugging
 		if (enableValidationLayers)
 		{
-			enabledLayers[layerCount++] = "VK_LAYER_KHRONOS_validation";
+			enabledLayers.push_back("VK_LAYER_KHRONOS_validation");
 		}
 
 		const VkInstanceCreateInfo instanceInfo
 		{
-			.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO,
+			.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
 			.pApplicationInfo = &appInfo,
 			.enabledLayerCount = (uint32_t) enabledLayers.size(),
 			.ppEnabledLayerNames = enabledLayers.data(),
-			.enabledExtensionCount = (uint32_t) enabledInstanceExtensions.size(),
-			.ppEnabledExtensionNames = enabledInstanceExtensions.data()
+			.enabledExtensionCount = glfwCount,
+			.ppEnabledExtensionNames = glfwExtensions
 		};
 		VkResult instanceResult = vkCreateInstance(&instanceInfo, nullptr, &device->vkInstance);
 
@@ -746,7 +755,10 @@ namespace gpu
 		//device->swapChain = device;
 
 
-		return true;
+		return
+		{
+			.device = device,
+		};
 	}
 
 	// GPU memory methods

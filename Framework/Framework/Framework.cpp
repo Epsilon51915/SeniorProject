@@ -23,11 +23,7 @@ void createWindow()
 
 void mainLoop()
 {
-	Device* device;
-
-	DesiredDevice desiredDevice;
-
-	createDevice(device, desiredDevice, window);
+	Device* device = createDevice({}, window).device;
 
 	std::vector<char> vertexShader = readShader("vert.spv", "");
 	std::vector<char> fragmentShader = readShader("frag.spv", "");

@@ -16,8 +16,8 @@
     "\\cmake",
     "\\Framework",
     "\\out",
+    "\\out\\build",
     "\\Slang Shaders"
   ],
-  "SelectedNode": "\\Slang Shaders\\HelloTriangleShader.slang",
   "PreviewInSolutionExplorer": false
 }

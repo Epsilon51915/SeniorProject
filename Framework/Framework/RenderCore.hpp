@@ -7,6 +7,7 @@
 *	TODO: Currently no debug method to make it easier, add later
 *	TODO: Utilizes a very pointless "presentation" bool I used from noapi, rework to not use this later
 *	TODO: Stencil, depth, render pass, etc. are from noapi and need to be changed to better fit what we are going for
+*	TODO: any vkEnumerate function is being terrible, rewrite to call twice over. First to get size of array, second to fill in that array
 */
 
 
@@ -304,11 +305,15 @@ namespace gpu
 		RasterizationState rasterization = {};
 	};
 
+	struct DeviceInit
+	{
+		Device* device = nullptr;
+	};
 
 	// Setup
 	uint32_t scoreDevice(VkPhysicalDevice device, VkSurfaceKHR surface);
 	void pickPhysicalDevice(VkInstance instance, Device* deviceInfo);
-	bool createDevice(Device* device, const DesiredDevice& desiredDevice = {}, GLFWwindow* window = nullptr);
+	DeviceInit createDevice(const DesiredDevice& desiredDevice = {}, GLFWwindow* window = nullptr);
 
 	// GPU memory methods
 	void* gpuMalloc(size_t bytes);
