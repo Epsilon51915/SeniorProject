@@ -29,10 +29,10 @@ void mainLoop()
 
 	createDevice(device, desiredDevice, window);
 
-	std::vector<char> vertexShader = pipeline::readShader("vert.spv", "");
-	std::vector<char> fragmentShader = pipeline::readShader("frag.spv", "");
+	std::vector<char> vertexShader = readShader("vert.spv", "");
+	std::vector<char> fragmentShader = readShader("frag.spv", "");
 
-	pipeline::GraphicsPSODesc graphicsPSODesc;
+	GraphicsPSODesc graphicsPSODesc;
 	graphicsPSODesc.vertex.code = vertexShader;
 	graphicsPSODesc.vertex.entryPoint = "vertMain";
 
@@ -40,9 +40,9 @@ void mainLoop()
 	graphicsPSODesc.fragment.entryPoint = "fragMain";
 	
 
-	pipeline::PSO* trianglePSO = pipeline::createGraphicsPSO(device, graphicsPSODesc);
+	PSO* trianglePSO = createGraphicsPSO(device, graphicsPSODesc);
 
-	sync::TimelinePoint latestCompletion{ .semaphore = sync::createTimelineSemaphore(device) };
+	TimelinePoint latestCompletion{ .semaphore = createTimelineSemaphore(device) };
 
 	// create command buffers
 	CommandPool* commandPools[] = { createCommandPool(device), createCommandPool(device) };
@@ -59,10 +59,10 @@ void mainLoop()
 		
 
 		gpuBeginRenderPass(commands, {
-			.colors = { { .render_view = frame.renderView, .load = LoadOp::clear } },
+			.colors = { { .renderView = frame.renderView, .load = LoadOp::clear } },
 			});
 
-		pipeline::bindPSO(commands, trianglePSO);
+		bindPSO(commands, trianglePSO);
 		draw(commands, {}, 3);
 		gpuEndRenderPass(commands);
 		endCommands(commands);
@@ -72,6 +72,15 @@ void mainLoop()
 
 		//glfwSwapBuffers(window);
 	}
+
+	waitIdle(device);
+
+	destroyCommandPool(commandPools[1]);
+	destroyCommandPool(commandPools[0]);
+	destroyTimelineSemaphore(latestCompletion.semaphore);
+	destroyPso(trianglePSO);
+
+	destroyDevice(device);
 }
 
 
