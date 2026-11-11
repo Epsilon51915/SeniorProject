@@ -17,6 +17,6 @@
     "\\Framework",
     "\\Slang Shaders"
   ],
-  "SelectedNode": "\\cmake\\FindVulkan.cmake",
+  "SelectedNode": "\\Framework\\RenderCore.cpp",
   "PreviewInSolutionExplorer": false
 }

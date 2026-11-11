@@ -77,13 +77,14 @@ void createWindow()
 
 void mainLoop()
 {
+	int loop = 0;
 	while (!glfwWindowShouldClose(window))
 	{
 		glfwPollEvents();
 		// Temp: Testing camera
 		glm::vec3 p = camera.getPosition();
 		glm::vec3 f = camera.getFront();
-		//printf("Position: %.2f, %.2f, %.2f | Front:  %.2f, %.2f, %.2f \n", p.x, p.y, p.z, f.x, f.y, f.z);
+		printf("Position: %.2f, %.2f, %.2f | Front:  %.2f, %.2f, %.2f \n", p.x, p.y, p.z, f.x, f.y, f.z);
 
 		//Esc to quit now since cursor is now captured for camera
 		if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
