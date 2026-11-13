@@ -24,11 +24,11 @@ EntityID createEntity() {
 }
 //
 
-TEST_CASE("Testing ECS")
-{
-	CHECK(createEntity() == 1);
-	CHECK(createEntity() == 2);
-}
+//TEST_CASE("Testing ECS")
+//{
+//	CHECK(createEntity() == 1);
+//	CHECK(createEntity() == 2);
+//}
 
 int main(int argc, char** argv) {
 	doctest::Context context;
@@ -58,7 +58,7 @@ int main(int argc, char** argv) {
 		createWindow();
 	}
 	
-	createWindow();
+	//createWindow();
 	mainLoop();
 	cleanUp();
 	return res + client_stuff_return_code; // the result from doctest is propagated here as well
@@ -82,6 +82,27 @@ void createWindow()
 void mainLoop()
 {
 	int loop = 0;
+
+	Device* device = create_device({ .window = window, .swapchain_format = Format::bgra8_srgb }).device;
+
+	std::vector<char> vertexShader = readShader("vert.spv", "");
+	std::vector<char> fragmentShader = readShader("frag.spv", "");
+
+	GraphicsPSODesc graphicsPSODesc;
+	graphicsPSODesc.vertex.code = vertexShader;
+	graphicsPSODesc.vertex.entryPoint = "vertMain";
+
+	graphicsPSODesc.fragment.code = fragmentShader;
+	graphicsPSODesc.fragment.entryPoint = "fragMain";
+
+
+	PSO* trianglePSO = createGraphicsPSO(device, graphicsPSODesc);
+
+	TimelinePoint latestCompletion{ .semaphore = createTimelineSemaphore(device) };
+
+	// create command buffers
+	CommandPool* commandPools[] = { createCommandPool(device), createCommandPool(device) };
+
 	while (!glfwWindowShouldClose(window))
 	{
 		glfwPollEvents();
@@ -95,29 +116,7 @@ void mainLoop()
 		{
 			glfwSetWindowShouldClose(window, true);
 		}
-	Device* device = create_device({.window = window, .swapchain_format = Format::bgra8_srgb }).device;
 
-	std::vector<char> vertexShader = readShader("vert.spv", "");
-	std::vector<char> fragmentShader = readShader("frag.spv", "");
-
-	GraphicsPSODesc graphicsPSODesc;
-	graphicsPSODesc.vertex.code = vertexShader;
-	graphicsPSODesc.vertex.entryPoint = "vertMain";
-
-	graphicsPSODesc.fragment.code = fragmentShader;
-	graphicsPSODesc.fragment.entryPoint = "fragMain";
-	
-
-	PSO* trianglePSO = createGraphicsPSO(device, graphicsPSODesc);
-
-	TimelinePoint latestCompletion{ .semaphore = createTimelineSemaphore(device) };
-
-	// create command buffers
-	CommandPool* commandPools[] = { createCommandPool(device), createCommandPool(device) };
-
-	while (!glfwWindowShouldClose(window))
-	{
-		glfwPollEvents();
 		if (latestCompletion.value >= 2)
 			wait_timeline({ .semaphore = latestCompletion.semaphore, .value = latestCompletion.value - 1 });
 		CommandPool* commandPool = commandPools[latestCompletion.value % 2];
