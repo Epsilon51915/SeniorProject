@@ -12,6 +12,7 @@
 
 
 #pragma once
+#define VULKAN_HPP_NO_CONSTRUCTORS
 #include <vulkan/vulkan.h>
 //#include <vulkan/vulkan_enums.hpp>
 #define GLFW_INCLUDE_VULKAN
@@ -71,6 +72,67 @@ namespace gpu
 		decrement_wrap,
 	};
 
+	enum class Format : uint8_t
+	{
+		r8_srgb,
+		rg8_srgb,
+		rgba8_srgb,
+		bgra8_srgb,
+
+		rgba4_unorm,
+		r5g5b5a1_unorm,
+		r5g6b5_unorm,
+
+		r8_unorm,
+		rg8_unorm,
+		rgba8_unorm,
+		bgra8_unorm,
+		r16_unorm,
+		rg16_unorm,
+		rgba16_unorm,
+
+		r8_uint,
+		rg8_uint,
+		rgba8_uint,
+		bgra8_uint,
+		r16_uint,
+		rg16_uint,
+		rgba16_uint,
+		r32_uint,
+		rg32_uint,
+		rgba32_uint,
+
+		r16_float,
+		rg16_float,
+		rgba16_float,
+		r32_float,
+		rg32_float,
+		rgba32_float,
+
+		rgb10a2_unorm,
+		rg11b10_float,
+
+		d16_unorm,
+		d24_unorm_s8_uint,
+		d32_float,
+		s8_uint,
+		d32_float_s8_uint,
+
+		eac_rg,
+		astc_4x4_srgb,
+		astc_4x4_unorm,
+		bc3_srgb,
+		bc3_unorm,
+		bc5_rg,
+		bc6h_ufloat,
+		bc6h_sfloat,
+		bc7_srgb,
+		bc7_unorm,
+
+		undefined, // Must remain last; preceding values are concrete texture formats.
+	};
+
+
 	struct RenderView;
 
 	struct GpuRange;
@@ -87,29 +149,16 @@ namespace gpu
 		bool presentPending = false;
 	};
 
-	struct Device;
-
-	// What we want from our GPU
-	struct DesiredDevice
+	struct uint32x3
 	{
-		//void* window = nullptr;
-		uint32_t desiredGraphicsQueues = 1; // Graphics(present) must be at least 1
-		uint32_t desiredComputeQueues = 0;
-		uint32_t desiredTransferQueues = 0;
-
-		uint32_t desiredSwapchainImageCount = 2;
-		uint32_t timeStampQueryCount = 256;
-
-		VkColorSpaceKHR colorSpace = VK_COLORSPACE_SRGB_NONLINEAR_KHR;
-
-		DesiredDevice() = default;
+		uint32_t x = 0;
+		uint32_t y = 0;
+		uint32_t z = 0;
 	};
-
-
-	struct Queue;
 
 	struct DeviceCapabilities
 	{
+		const char* deviceName = "";
 		// Queue Capabilities
 		uint32_t queueCount = 0;
 		uint32_t queueGeneralCount = 0;
@@ -118,11 +167,40 @@ namespace gpu
 		uint32_t timestampQueryCount = 0;
 		// TODO: add compression texture stuff here if we go that route
 
+		uint32x3 copy_texture_granularity = { .x = 1, .y = 1, .z = 1 };
+
+		uint64_t maxPushDataSize = 0;
+		uint64_t textureHeapAlignment = 0;
+		float timestampPeriodns = 0.0f; // Nanoseconds per timestamp tick; zero when profiling is unavailable.
+		uint32_t subTexelPrecisionBits = 0; // Fractional filtering precision, for conservative sampled-field bounds.
 		bool textureCompressionBC = false;
 		bool textureCompressionASTC = false;
 		bool storageInputOutput16 = false;
 		bool indirectMeshDraw = false;
 	};
+
+	struct Device;
+
+	// What we want from our GPU
+	struct DesiredDevice
+	{
+		GLFWwindow* window = nullptr; // HWND on Windows; CAMetalLayer* on macOS/iOS. Null creates a headless device.
+		//void* window = nullptr;
+		uint32_t desiredGraphicsQueues = 1; // Graphics(present) must be at least 1
+		uint32_t desiredComputeQueues = 0;
+		uint32_t desiredTransferQueues = 0;
+
+		uint32_t desiredSwapchainImageCount = 2;
+		uint32_t timestamp_query_count = 256;
+
+		VkColorSpaceKHR colorSpace = VK_COLORSPACE_SRGB_NONLINEAR_KHR;
+		Format swapchain_format = Format::undefined;
+	};
+
+
+	struct Queue;
+
+
 
 	struct GpuTextureSizeAlign;
 
@@ -308,12 +386,16 @@ namespace gpu
 	struct DeviceInit
 	{
 		Device* device = nullptr;
+		VkResult error = VK_SUCCESS;
 	};
 
 	// Setup
 	uint32_t scoreDevice(VkPhysicalDevice device, VkSurfaceKHR surface);
 	void pickPhysicalDevice(VkInstance instance, Device* deviceInfo);
 	DeviceInit createDevice(const DesiredDevice& desiredDevice = {}, GLFWwindow* window = nullptr);
+
+	DeviceInit createDevice2(const DesiredDevice& desiredDevice = {}, GLFWwindow* window = nullptr);
+	DeviceInit create_device(const DesiredDevice& desc);
 
 	// GPU memory methods
 	void* gpuMalloc(size_t bytes);
@@ -331,8 +413,11 @@ namespace gpu
 
 	// Swapchain methods
 	bool swapchainSurfaceConfigurationChanged(const Swapchain& swapchain);
+	VkResult recreateSwapchain(Swapchain& swapchain);
 	VkCompositeAlphaFlagBitsKHR chooseCompositeAlpha(VkCompositeAlphaFlagsKHR supported);
 	SwapchainFrame acquire(CommandBuffer* commands);
+	VkResult set_swapchain_format(Device* device, Format format);
+	bool swapchain_surface_configuration_changed(const Swapchain& swapchain);
 
 
 	// TO BE ORGANIZED BETTER LATER
@@ -340,6 +425,7 @@ namespace gpu
 	void setScissor(CommandBuffer* commands, const Scissor& scissor);
 	void setDepthStencil(CommandBuffer* commands, const DepthStencilState& state);
 	void emitRootPointer(CommandBuffer* commands, const void* root);
+	void wait_timeline(TimelinePoint point);
 
 	// Copy methods
 	void copyMemory();
@@ -350,7 +436,7 @@ namespace gpu
 	CommandBuffer* beginCommands(CommandPool* pool);
 	void resetCommandPool(CommandPool* pool);
 	void endCommands(CommandBuffer* buffer);
-	void recordImageBarriers(VkCommandBuffer commandBuffer, const std::vector<VkImageMemoryBarrier2> barriers);
+	void recordImageBarriers(VkCommandBuffer commandBuffer, const VkImageMemoryBarrier2* barriers, uint32_t numBarriers);
 	CommandPool* createCommandPool(Device* device, uint32_t queueIndex = 0);
 
 	// Render pass methods

@@ -23,7 +23,7 @@ void createWindow()
 
 void mainLoop()
 {
-	Device* device = createDevice({}, window).device;
+	Device* device = create_device({.window = window, .swapchain_format = Format::bgra8_srgb }).device;
 
 	std::vector<char> vertexShader = readShader("vert.spv", "");
 	std::vector<char> fragmentShader = readShader("frag.spv", "");
@@ -46,6 +46,8 @@ void mainLoop()
 	while (!glfwWindowShouldClose(window))
 	{
 		glfwPollEvents();
+		if (latestCompletion.value >= 2)
+			wait_timeline({ .semaphore = latestCompletion.semaphore, .value = latestCompletion.value - 1 });
 		CommandPool* commandPool = commandPools[latestCompletion.value % 2];
 		resetCommandPool(commandPool);
 
