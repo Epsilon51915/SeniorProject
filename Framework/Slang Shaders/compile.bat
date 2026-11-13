@@ -1,1 +1,1 @@
-C:/VulkanSDK/1.4.341.1/bin/slangc.exe shader.slang -target spirv -profile spirv_1_4 -emit-spirv-directly -fvk-use-entrypoint-name -entry vertMain -entry fragMain -o slang.spv
+C:/VulkanSDK/1.4.363.1/bin/slangc.exe HelloTriangleShader.slang -target spirv -profile spirv_1_4 -emit-spirv-directly -fvk-use-entrypoint-name -entry fragMain -o frag.spv

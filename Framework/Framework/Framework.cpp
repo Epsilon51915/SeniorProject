@@ -58,7 +58,11 @@ int main(int argc, char** argv) {
 		createWindow();
 	}
 	
+	createWindow();
+	mainLoop();
+	cleanUp();
 	return res + client_stuff_return_code; // the result from doctest is propagated here as well
+	//return 0;
 }
 
 void createWindow()
@@ -91,10 +95,62 @@ void mainLoop()
 		{
 			glfwSetWindowShouldClose(window, true);
 		}
-		//
+	Device* device = create_device({.window = window, .swapchain_format = Format::bgra8_srgb }).device;
+
+	std::vector<char> vertexShader = readShader("vert.spv", "");
+	std::vector<char> fragmentShader = readShader("frag.spv", "");
+
+	GraphicsPSODesc graphicsPSODesc;
+	graphicsPSODesc.vertex.code = vertexShader;
+	graphicsPSODesc.vertex.entryPoint = "vertMain";
+
+	graphicsPSODesc.fragment.code = fragmentShader;
+	graphicsPSODesc.fragment.entryPoint = "fragMain";
+	
+
+	PSO* trianglePSO = createGraphicsPSO(device, graphicsPSODesc);
+
+	TimelinePoint latestCompletion{ .semaphore = createTimelineSemaphore(device) };
+
+	// create command buffers
+	CommandPool* commandPools[] = { createCommandPool(device), createCommandPool(device) };
+
+	while (!glfwWindowShouldClose(window))
+	{
+		glfwPollEvents();
+		if (latestCompletion.value >= 2)
+			wait_timeline({ .semaphore = latestCompletion.semaphore, .value = latestCompletion.value - 1 });
+		CommandPool* commandPool = commandPools[latestCompletion.value % 2];
+		resetCommandPool(commandPool);
+
+		CommandBuffer* commands = beginCommands(commandPool);
+		const SwapchainFrame frame = acquire(commands);
+
+		
+
+		gpuBeginRenderPass(commands, {
+			.colors = { { .renderView = frame.renderView, .load = LoadOp::clear } },
+			});
+
+		bindPSO(commands, trianglePSO);
+		draw(commands, {}, 3);
+		gpuEndRenderPass(commands);
+		endCommands(commands);
+
+		latestCompletion.value++;
+		submitAndPresent(device, { .commands = { commands }, .completion = latestCompletion });
+		
 		//glfwSwapBuffers(window);
 	}
-	cleanUp();
+
+	waitIdle(device);
+
+	destroyCommandPool(commandPools[1]);
+	destroyCommandPool(commandPools[0]);
+	destroyTimelineSemaphore(latestCompletion.semaphore);
+	destroyPso(trianglePSO);
+
+	destroyDevice(device);
 }
 
 

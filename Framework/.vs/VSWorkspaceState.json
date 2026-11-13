@@ -15,8 +15,10 @@
     "",
     "\\cmake",
     "\\Framework",
+    "\\out",
+    "\\out\\build",
     "\\Slang Shaders"
   ],
-  "SelectedNode": "\\Framework\\RenderCore.cpp",
+  "SelectedNode": "\\out",
   "PreviewInSolutionExplorer": false
 }
