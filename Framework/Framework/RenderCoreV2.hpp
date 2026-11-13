@@ -15,12 +15,6 @@
 #include <iostream>
 #include <cstdint>
 
-#ifdef NDEBUG
-constexpr bool enableValidationLayers = false;
-#else
-constexpr bool enableValidationLayers = true;
-#endif
-
 namespace gpu
 {
 	/// Important enums for program management
@@ -111,7 +105,11 @@ namespace gpu
 	// Find physical device to be used and create the Vulkan logical device
 	DeviceInit createDevice();
 	// Create the debug method callback IF debug compilation mode
-	VkResult createDebugUtil;
+	VkResult createDebugUtil();
+	static VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
+		VkDebugUtilsMessageTypeFlagsEXT messageType,
+		const VkDebugUtilsMessengerCallbackDataEXT* pCallbackData,
+		void* pUserData);
 
 	/// Shader methods
 	// Refer to orignial render core for my little theory on this
