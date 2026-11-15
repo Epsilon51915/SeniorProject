@@ -4,7 +4,10 @@
 #pragma once
 
 #include <iostream>
-#include "RenderCore.hpp"
+//#include "RenderCore.hpp"
+#include "Camera.h"
+#include "ECS.h"
+#include "RenderCoreV2.hpp"
 
 
 

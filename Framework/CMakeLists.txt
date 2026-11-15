@@ -11,7 +11,7 @@ endif()
 
 project ("Framework")
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}/cmake") # Used for finding Vulkan
-list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}/doctest")
+#list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}/doctest")
 
 find_package(doctest CONFIG REQUIRED)
 find_package(glfw3 CONFIG REQUIRED)

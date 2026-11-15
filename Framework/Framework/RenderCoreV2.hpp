@@ -9,13 +9,20 @@
 *	TODO: Properly apply inline/unnamed namespaces: https://www.learncpp.com/cpp-tutorial/unnamed-and-inline-namespaces/
 */
 
+#define VULKAN_HPP_NO_CONSTRUCTORS
 #include <vulkan/vulkan.h>
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
 #include <iostream>
+#include <string>
 #include <cstdint>
+#include <vector>
+#include <stdexcept>
+#include <fstream>
+#include <stddef.h>
+#include <stdio.h>
 
-namespace gpu
+namespace core
 {
 	/// Important enums for program management
 	enum class MemoryType : uint8_t
@@ -93,23 +100,22 @@ namespace gpu
 	};
 	struct CommandPool;
 
-	// Filled in when inspecting potential devices
-	struct Candidate
-	{
 
-	};
 
 	/// Forward decleration of most methods to be defined in RenderCore.cpp
 	void getQueueInfo(VkPhysicalDevice device);
-	void inspectDevice(VkPhysicalDevice device);
+	void inspectDevice(VkPhysicalDevice device, const char* maintenanceExtensionName, Candidate& output);
+	VkResult getInstanceExtensions(std::vector<VkExtensionProperties>& extensions);
+	VkResult getDeviceInstanceExtensions(std::vector<VkExtensionProperties>& extensions, VkPhysicalDevice device);
+	VkResult getInstanceLayerProperties(std::vector<VkLayerProperties>& extensions);
 	// Find physical device to be used and create the Vulkan logical device
 	DeviceInit createDevice();
 	// Create the debug method callback IF debug compilation mode
 	VkResult createDebugUtil();
-	static VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
-		VkDebugUtilsMessageTypeFlagsEXT messageType,
-		const VkDebugUtilsMessengerCallbackDataEXT* pCallbackData,
-		void* pUserData);
+	//static VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
+	//	VkDebugUtilsMessageTypeFlagsEXT messageType,
+	//	const VkDebugUtilsMessengerCallbackDataEXT* pCallbackData,
+	//	void* pUserData);
 
 	/// Shader methods
 	// Refer to orignial render core for my little theory on this
