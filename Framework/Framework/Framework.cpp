@@ -149,7 +149,7 @@ void mainLoop()
 	//destroyTimelineSemaphore(latestCompletion.semaphore);
 	//destroyPso(trianglePSO);
 
-	//destroyDevice(device);
+	destroyDevice(device);
 }
 
 

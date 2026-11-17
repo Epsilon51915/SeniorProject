@@ -11,6 +11,8 @@ namespace core {
 	constexpr uint32_t maxQueueFamilies		 = 64; // So unbeleivably unlikely but sure
 	constexpr uint32_t queueTypeCount		 = 3; // The 3 queues: Graphics, Compute, Transfer.
 	constexpr uint32_t maxSwapchainImages	 = 3;
+	constexpr uint32_t formatCount = static_cast<uint32_t>(Format::undefined);
+	constexpr VkPresentModeKHR presentMode = VK_PRESENT_MODE_FIFO_KHR;
 
 
 #ifdef NDEBUG
@@ -55,6 +57,146 @@ namespace core {
 		PFN_vkCmdCopyImageToMemoryKHR cmdCopyImageToMemory = nullptr;
 	};
 
+	template<typename T>
+	T loadDeviceProc(VkDevice device, const char* name) noexcept
+	{
+		const PFN_vkVoidFunction proc = vkGetDeviceProcAddr(device, name);
+		return reinterpret_cast<T>(proc);
+	}
+
+	struct RenderView
+	{
+		Device* state = nullptr;
+		VkImageView view = VK_NULL_HANDLE;
+		uint32_t width = 0;
+		uint32_t height = 0;
+		bool swapchainView = false;
+	};
+
+	struct RetiredSwapchain
+	{
+		VkSwapchainKHR handle = VK_NULL_HANDLE;
+		VkImageView views[maxSwapchainImages]{};
+		uint32_t viewCount = 0;
+	};
+
+	struct DeferredSwapchainImage
+	{
+		uint64_t retireValue = 0;
+		VkSwapchainKHR swapchain = VK_NULL_HANDLE;
+		VkImageView view = VK_NULL_HANDLE;
+	};
+
+	struct SwapchainDeleteQueue
+	{
+
+		DeferredSwapchainImage* entries = nullptr;
+		size_t capacity = 0;
+		size_t first = 0;
+		size_t count = 0;
+
+		void push(uint64_t retireValue, VkSwapchainKHR swapchain, VkImageView view) noexcept
+		{
+			//assert(swapchain && view);
+			if (count == capacity)
+			{
+				const size_t old_size = capacity;
+				capacity = old_size == 0 ? 1 : old_size * 2;
+				entries = static_cast<DeferredSwapchainImage*>(realloc(entries, capacity * sizeof(DeferredSwapchainImage)));
+				for (size_t index = 0; index < first; ++index)
+				{
+					entries[old_size + index] = entries[index];
+					entries[index] = {};
+				}
+			}
+			if (count != 0)
+			{
+				const size_t back = (first + count - 1) % capacity;
+				//assert(entries[back].retireValue <= retire_value &&
+				//	"swapchain deletion retire values must be monotonic");
+			}
+			entries[(first + count) % capacity] = {
+				.retireValue = retireValue,
+				.swapchain = swapchain,
+				.view = view,
+			};
+			++count;
+		}
+
+		void collect(VkDevice device, uint64_t completedValue) noexcept
+		{
+			while (count != 0 && entries[first].retireValue <= completedValue)
+			{
+				const DeferredSwapchainImage& entry = entries[first];
+				const bool final_image = count == 1 || entries[(first + 1) % capacity].swapchain != entry.swapchain;
+				vkDestroyImageView(device, entry.view, nullptr);
+				if (final_image)
+					vkDestroySwapchainKHR(device, entry.swapchain, nullptr);
+				entries[first] = {};
+				first = (first + 1) % capacity;
+				--count;
+			}
+			if (count == 0) first = 0;
+		}
+
+	};
+
+	// Series of images of rendered images that will be presented
+	struct Swapchain
+	{
+		Device* state = nullptr;
+		VkSwapchainKHR handle = VK_NULL_HANDLE;
+
+		VkImage images[maxSwapchainImages]{};
+		RenderView renderViews[maxSwapchainImages]{};
+
+		//present::RenderView renderViews[maxSwapchainImages]{};
+		uint32_t imageIndex = 0;
+		uint32_t imageCount = 0;
+		uint32_t width = 0;
+		uint32_t height = 0;
+		VkColorSpaceKHR colorSpace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR; // Default image format that will be used
+		Format format = Format::bgra8_srgb;
+		VkSurfaceTransformFlagBitsKHR transform = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
+		VkCompositeAlphaFlagBitsKHR compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
+		CommandBuffer* transitionCommands = nullptr;
+		bool acquired = false;
+		bool recreateRequired = false; //  Happens when resolution changes/minimized or maximized.
+		bool initialized[maxSwapchainImages]{};
+
+		PresentContext* presentContext = nullptr;
+
+	};
+
+	// Command Pool/Buffer definitions. Pools chain buffers using linked lists TODO: Potentially make into vector for easier use?
+	struct CommandPool
+	{
+		Device* state = nullptr;
+		VkCommandPool commandPool = VK_NULL_HANDLE;
+		CommandBuffer* first = nullptr;
+		CommandBuffer* last = nullptr;
+		CommandBuffer* nextBuffer = nullptr;
+		bool timestamps = false;
+	};
+
+	// Series of commands for the GPU to execute
+	struct CommandBuffer
+	{
+		Device* state = nullptr;
+		CommandBuffer* next = nullptr;
+		VkCommandPool commandPool = VK_NULL_HANDLE;
+		VkCommandBuffer commandBuffer = VK_NULL_HANDLE;
+		VkCommandBuffer epilogue = VK_NULL_HANDLE;
+		VkQueryPool timestampPool = VK_NULL_HANDLE;
+
+		Swapchain* swapchain = nullptr;
+		bool submitted = false;
+		bool hasEpilogue = false;
+
+		uint32_t timestampCount = 0;
+		uint64_t** timestampDestinations = nullptr;
+		uint64_t* timestampResults = nullptr;
+	};
 
 	// The queue counts, features, and other aspects of the physical/logical device we are using
 	// TODO: Consider if this struct is really needed as these variables can honestly be in Device and we have 1 less struct
@@ -64,10 +206,21 @@ namespace core {
 		
 
 		// Queue Type Information
-		uint32_t totalQueueCount	= 0;
+		uint32_t queueCount = 0;
 		uint32_t graphicsQueueCount = 0;
 		uint32_t computeQueueCount	= 0;
 		uint32_t transferQueueCount = 0;
+
+		uint32x3 copyTextureGranularity = { .x = 1, .y = 1, .z = 1 }; // Used by transfer queue
+
+		uint64_t maxPushDataSize = 0;
+		uint64_t textureHeapAlignment = 0;
+		float timestampPeriodns = 0.0f; // Nanoseconds per timestamp tick; zero when profiling is unavailable.
+		uint32_t subTexelPrecisionBits = 0; // Fractional filtering precision, for conservative sampled-field bounds.
+		bool textureCompressionBc = false;
+		bool textureCompressionAstc = false;
+		bool storageInputOutput16 = false;
+		bool indirectMeshDraw = false;
 	};
 
 	// Definition of forward declared structs
@@ -86,21 +239,25 @@ namespace core {
 
 		// Device Information/Properties
 		// TODO: research on whether to use VkPhysicalDeviceMemoryProperties or VkPhysicalDeviceMemoryProperties2
-		VkPhysicalDeviceProperties deviceProperties;
-		VkPhysicalDeviceMemoryProperties deviceMemProps{};
+		VkPhysicalDeviceProperties2 deviceProperties{.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2 };
+		VkPhysicalDeviceMemoryProperties2 deviceMemProps{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2 };
 		VkPhysicalDeviceDescriptorHeapPropertiesEXT deviceHeapProps{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_HEAP_PROPERTIES_EXT };
 
 		// Queue Family Information
+		uint32_t totalQueueCount = 0;
 		uint32_t queueFamilyCount = 0;
 		uint32_t queueFamiliesIndex[queueTypeCount]{};
 
 		// Texture Information
-		uint64_t textureHeapAlign		= 16; // 16 what? Define this.
+		uint64_t textureHeapAlignment	= 16; // 16 what? Define this.
 		uint32_t textureMemoryType		= VK_MAX_MEMORY_TYPES;
 		bool textureCompressionEtc2		= false;
 		bool swapchainColorSpaceEnabled = false;
 
 		// Swapchain/Present Information
+		SwapchainDeleteQueue swapchainDeleteQueue;
+		RetiredSwapchain retiredSwapchains[maxSwapchainImages]{};
+		VkFormatFeatureFlags2 formatFeatures[formatCount]{};
 
 		// Present Information
 		PresentContext presentContexts[maxSwapchainImages]{};
@@ -110,6 +267,16 @@ namespace core {
 		uint64_t presentationRetirementValue	 = 0;
 		uint64_t completedPresentationRetirement = 0;
 		uint64_t maxTimelineValueDifference		 = 0;
+
+		// Device methods
+		VkResult createPresentContext(PresentContext& context);
+		void destroyPresentContext(PresentContext& context) noexcept;
+		void pollPresentContexts() noexcept;
+		void finishPresentContext(PresentContext& context) noexcept;
+		void waitPresentContext(PresentContext& context) noexcept;
+		void queueRetiredSwapchain(RetiredSwapchain& retired) noexcept;
+		void drainContexts() noexcept;
+		void waitPresentationRetirement(uint64_t value);
 
 		~Device();
 
@@ -171,7 +338,496 @@ namespace core {
 		VkPhysicalDeviceVulkan12Properties vulkan12Properties{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_PROPERTIES };
 		VkPhysicalDeviceProperties2 properties{.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2 }; // NOTE: in the orignial noapi this uses prop1 instead of prop2
 		VkPhysicalDeviceMemoryProperties2 memoryProperties{.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2 }; // Same here
+
+		std::vector<const char*> enabledExtensions;
 	};
+
+	struct Queue
+	{
+		VkQueue queue = VK_NULL_HANDLE;
+		bool timestamps = false;
+		VkCommandBufferSubmitInfo* commandSubmitInfos = nullptr;
+		VkSemaphoreSubmitInfo* waitSubmitInfos = nullptr;
+		uint32_t familyIndex = 0;
+		size_t commandSubmitCapacity = 0;
+		size_t waitSubmitCapacity = 0;
+	};
+
+	// Device method defintions
+	Device::~Device()
+	{
+		if (device)
+		{
+			drainContexts();
+			destroyOwnedSwapchain(*this);
+			swapchainDeleteQueue.collect(device, completedPresentationRetirement);
+			//assert(swapchain_delete_queue.count == 0);
+		}
+		if (device && presentationRetirement) vkDestroySemaphore(device, presentationRetirement, nullptr);
+		for (uint32_t index = 0; index < totalQueueCount; ++index)
+		{
+			free(queueArray[index].commandSubmitInfos);
+			free(queueArray[index].waitSubmitInfos);
+		}
+		delete[] queueArray;
+		//delete buffer_map;
+		free(swapchainDeleteQueue.entries);
+		for (uint32_t index = 0; index < presentContextCount; ++index)
+		{
+			destroyPresentContext(presentContexts[index]);
+		}
+		if (device) vkDestroyDevice(device, nullptr);
+		if (instance && surface) vkDestroySurfaceKHR(instance, surface, nullptr);
+		//if (instance && debug_messenger && destroyDebugMessenger) destroy_debug_messenger(instance, debug_messenger, nullptr);
+		if (instance) vkDestroyInstance(instance, nullptr);
+	}
+
+	void Device::waitPresentationRetirement(uint64_t value)
+	{
+		//assert(value <= presentation_retirement_value);
+		if (value <= completedPresentationRetirement)
+		{
+			swapchainDeleteQueue.collect(device, completedPresentationRetirement);
+			return;
+		}
+		const VkSemaphoreWaitInfo wait_info{
+			.sType = VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO,
+			.semaphoreCount = 1,
+			.pSemaphores = &presentationRetirement,
+			.pValues = &value,
+		};
+		vkWaitSemaphores(device, &wait_info, ~uint64_t{ 0 });
+		completedPresentationRetirement = value;
+		swapchainDeleteQueue.collect(device, completedPresentationRetirement);
+	}
+
+	void Device::drainContexts() noexcept
+	{
+		waitPresentationRetirement(presentationRetirementValue);
+		for (uint32_t index = 0; index < presentContextCount; ++index)
+		{
+			waitPresentContext(presentContexts[index]);
+		}
+		for (const RetiredSwapchain& retired : retiredSwapchains)
+		{
+			//assert(!retired.handle);
+		}
+		swapchainDeleteQueue.collect(device, completedPresentationRetirement);
+	}
+
+	void Device::pollPresentContexts() noexcept
+	{
+		for (uint32_t index = 0; index < presentContextCount; ++index)
+		{
+			PresentContext& context = presentContexts[index];
+			if (!context.presentPending)
+				continue;
+			const VkResult result = vkGetFenceStatus(device, context.presented);
+			if (result == VK_NOT_READY)
+				continue;
+			//assert_vk(result);
+			context.presentPending = false;
+			finishPresentContext(context);
+		}
+	}
+
+	void Device::finishPresentContext(PresentContext& context) noexcept
+	{
+		//assert(!context.present_pending && context.swapchain);
+		const VkSwapchainKHR completedSwapchain = context.swapchain;
+		context.swapchain = VK_NULL_HANDLE;
+		for (RetiredSwapchain& retired : retiredSwapchains)
+		{
+			if (retired.handle != completedSwapchain)
+				continue;
+			for (const PresentContext& pending : presentContexts)
+			{
+				if (pending.presentPending && pending.swapchain == completedSwapchain)
+					return;
+			}
+			queueRetiredSwapchain(retired);
+			return;
+		}
+	}
+
+	void Device::destroyPresentContext(PresentContext& context) noexcept
+	{
+		//assert(!context.present_pending);
+		if (device && context.acquired) vkDestroySemaphore(device, context.acquired, nullptr);
+		if (device && context.rendered) vkDestroySemaphore(device, context.rendered, nullptr);
+		if (device && context.presented) vkDestroyFence(device, context.presented, nullptr);
+		context = {};
+	}
+
+	void Device::waitPresentContext(PresentContext& context) noexcept
+	{
+		if (!context.presentPending)
+			return;
+		vkWaitForFences(device, 1, &context.presented, VK_TRUE, ~uint64_t{ 0 });
+		context.presentPending = false;
+		finishPresentContext(context);
+	}
+
+	void Device::queueRetiredSwapchain(RetiredSwapchain& retired) noexcept
+	{
+		//assert(retired.handle && retired.viewCount != 0);
+		for (uint32_t index = 0; index < retired.viewCount; ++index)
+		{
+			const VkImageView view = retired.views[index];
+			//assert(view);
+			swapchainDeleteQueue.push(presentationRetirementValue, retired.handle, view);
+		}
+		retired = {};
+		swapchainDeleteQueue.collect(device, completedPresentationRetirement);
+	}
+
+	VkFormat toVk(Format format)
+	{
+		switch (format)
+		{
+		case Format::r8_srgb: return VK_FORMAT_R8_SRGB;
+		case Format::rg8_srgb: return VK_FORMAT_R8G8_SRGB;
+		case Format::rgba8_srgb: return VK_FORMAT_R8G8B8A8_SRGB;
+		case Format::bgra8_srgb: return VK_FORMAT_B8G8R8A8_SRGB;
+		case Format::rgba4_unorm: return VK_FORMAT_R4G4B4A4_UNORM_PACK16;
+		case Format::r5g5b5a1_unorm: return VK_FORMAT_R5G5B5A1_UNORM_PACK16;
+		case Format::r5g6b5_unorm: return VK_FORMAT_R5G6B5_UNORM_PACK16;
+		case Format::r8_unorm: return VK_FORMAT_R8_UNORM;
+		case Format::rg8_unorm: return VK_FORMAT_R8G8_UNORM;
+		case Format::rgba8_unorm: return VK_FORMAT_R8G8B8A8_UNORM;
+		case Format::bgra8_unorm: return VK_FORMAT_B8G8R8A8_UNORM;
+		case Format::r16_unorm: return VK_FORMAT_R16_UNORM;
+		case Format::rg16_unorm: return VK_FORMAT_R16G16_UNORM;
+		case Format::rgba16_unorm: return VK_FORMAT_R16G16B16A16_UNORM;
+		case Format::r8_uint: return VK_FORMAT_R8_UINT;
+		case Format::rg8_uint: return VK_FORMAT_R8G8_UINT;
+		case Format::rgba8_uint: return VK_FORMAT_R8G8B8A8_UINT;
+		case Format::bgra8_uint: return VK_FORMAT_B8G8R8A8_UINT;
+		case Format::r16_uint: return VK_FORMAT_R16_UINT;
+		case Format::rg16_uint: return VK_FORMAT_R16G16_UINT;
+		case Format::rgba16_uint: return VK_FORMAT_R16G16B16A16_UINT;
+		case Format::r32_uint: return VK_FORMAT_R32_UINT;
+		case Format::rg32_uint: return VK_FORMAT_R32G32_UINT;
+		case Format::rgba32_uint: return VK_FORMAT_R32G32B32A32_UINT;
+		case Format::r16_float: return VK_FORMAT_R16_SFLOAT;
+		case Format::rg16_float: return VK_FORMAT_R16G16_SFLOAT;
+		case Format::rgba16_float: return VK_FORMAT_R16G16B16A16_SFLOAT;
+		case Format::r32_float: return VK_FORMAT_R32_SFLOAT;
+		case Format::rg32_float: return VK_FORMAT_R32G32_SFLOAT;
+		case Format::rgba32_float: return VK_FORMAT_R32G32B32A32_SFLOAT;
+		case Format::rgb10a2_unorm: return VK_FORMAT_A2B10G10R10_UNORM_PACK32;
+		case Format::rg11b10_float: return VK_FORMAT_B10G11R11_UFLOAT_PACK32;
+		case Format::d16_unorm: return VK_FORMAT_D16_UNORM;
+		case Format::d24_unorm_s8_uint: return VK_FORMAT_D24_UNORM_S8_UINT;
+		case Format::d32_float: return VK_FORMAT_D32_SFLOAT;
+		case Format::s8_uint: return VK_FORMAT_S8_UINT;
+		case Format::d32_float_s8_uint: return VK_FORMAT_D32_SFLOAT_S8_UINT;
+		case Format::eac_rg: return VK_FORMAT_EAC_R11G11_UNORM_BLOCK;
+		case Format::astc_4x4_srgb: return VK_FORMAT_ASTC_4x4_SRGB_BLOCK;
+		case Format::astc_4x4_unorm: return VK_FORMAT_ASTC_4x4_UNORM_BLOCK;
+		case Format::bc3_srgb: return VK_FORMAT_BC3_SRGB_BLOCK;
+		case Format::bc3_unorm: return VK_FORMAT_BC3_UNORM_BLOCK;
+		case Format::bc5_rg: return VK_FORMAT_BC5_UNORM_BLOCK;
+		case Format::bc6h_ufloat: return VK_FORMAT_BC6H_UFLOAT_BLOCK;
+		case Format::bc6h_sfloat: return VK_FORMAT_BC6H_SFLOAT_BLOCK;
+		case Format::bc7_srgb: return VK_FORMAT_BC7_SRGB_BLOCK;
+		case Format::bc7_unorm: return VK_FORMAT_BC7_UNORM_BLOCK;
+		case Format::undefined: return VK_FORMAT_UNDEFINED;
+		}
+		return {};
+	}
+
+	VkResult Device::createPresentContext(PresentContext& context)
+	{
+		//assert(!context.acquired && !context.rendered && !context.presented && !context.swapchain && !context.present_pending);
+		const VkSemaphoreCreateInfo semaphore_info{
+			.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
+		};
+		VkResult error = vkCreateSemaphore(device, &semaphore_info, nullptr, &context.acquired);
+		if (error != VK_SUCCESS)
+			return error;
+		error = vkCreateSemaphore(device, &semaphore_info, nullptr, &context.rendered);
+		if (error != VK_SUCCESS)
+		{
+			destroyPresentContext(context);
+			return error;
+		}
+		const VkFenceCreateInfo fence_info{
+			.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
+		};
+		error = vkCreateFence(device, &fence_info, nullptr, &context.presented);
+		if (error != VK_SUCCESS)
+		{
+			destroyPresentContext(context);
+			return error;
+		}
+		return VK_SUCCESS;
+	}
+
+	VkCompositeAlphaFlagBitsKHR chooseCompositeAlpha(VkCompositeAlphaFlagsKHR supported)
+	{
+		constexpr VkCompositeAlphaFlagBitsKHR choices[]{
+			VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
+			VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR,
+			VK_COMPOSITE_ALPHA_POST_MULTIPLIED_BIT_KHR,
+			VK_COMPOSITE_ALPHA_INHERIT_BIT_KHR,
+		};
+		for (VkCompositeAlphaFlagBitsKHR choice : choices)
+		{
+			if ((supported & choice) != 0)
+				return choice;
+		}
+		return static_cast<VkCompositeAlphaFlagBitsKHR>(0);
+	}
+
+	// If a change is called, and the current/old swapchain is no longer suitable, delete that handle
+	void retireSwapchainHandle(Swapchain& swapchain) noexcept
+	{
+		Device* device = swapchain.state;
+		if (!swapchain.handle)
+		{
+			//assert(swapchain.image_count == 0);
+			swapchain.width = 0;
+			swapchain.height = 0;
+			return;
+		}
+
+		device->pollPresentContexts();
+		RetiredSwapchain retired{
+			.handle = swapchain.handle,
+		};
+		for (uint32_t index = 0; index < swapchain.imageCount; ++index)
+		{
+			RenderView& render_view = swapchain.renderViews[index];
+			retired.views[retired.viewCount++] = render_view.view;
+			render_view = {};
+			swapchain.images[index] = VK_NULL_HANDLE;
+			swapchain.initialized[index] = false;
+		}
+		swapchain.imageCount = 0;
+		swapchain.handle = VK_NULL_HANDLE;
+		swapchain.width = 0;
+		swapchain.height = 0;
+
+		bool present_pending = false;
+		for (uint32_t index = 0; index < device->presentContextCount; ++index)
+		{
+			const PresentContext& context = device->presentContexts[index];
+			if (context.presentPending && context.swapchain == retired.handle)
+			{
+				present_pending = true;
+				break;
+			}
+		}
+		if (!present_pending)
+		{
+			device->queueRetiredSwapchain(retired);
+			return;
+		}
+		for (RetiredSwapchain& slot : device->retiredSwapchains)
+		{
+			if (!slot.handle)
+			{
+				slot = retired;
+				return;
+			}
+		}
+		for (uint32_t index = 0; index < device->presentContextCount; ++index)
+		{
+			PresentContext& context = device->presentContexts[index];
+			if (context.presentPending && context.swapchain == retired.handle)
+				device->waitPresentContext(context);
+		}
+		device->queueRetiredSwapchain(retired);
+	}
+
+	// If a change is needed for the swapchain, or for initial creation, we recreate the swapchain here
+	VkResult recreateSwapchain(Swapchain& swapchain)
+	{
+		Device& device = *swapchain.state;
+		//assert(!swapchain.acquired && !device.acquired_swapchain);
+		const VkSurfacePresentModeKHR presentModeInfo{
+			.sType = VK_STRUCTURE_TYPE_SURFACE_PRESENT_MODE_KHR,
+			.presentMode = presentMode,
+		};
+		const VkPhysicalDeviceSurfaceInfo2KHR surfaceInfo{
+			.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SURFACE_INFO_2_KHR,
+			.pNext = &presentModeInfo,
+			.surface = device.surface,
+		};
+		VkSurfaceCapabilities2KHR capabilitiesInfo{
+			.sType = VK_STRUCTURE_TYPE_SURFACE_CAPABILITIES_2_KHR,
+		};
+		VkResult error = vkGetPhysicalDeviceSurfaceCapabilities2KHR(device.physicalDevice, &surfaceInfo, &capabilitiesInfo);
+		if (error != VK_SUCCESS)
+			return error;
+		const VkSurfaceCapabilitiesKHR& capabilities = capabilitiesInfo.surfaceCapabilities;
+
+		const VkExtent2D extent = capabilities.currentExtent;
+		if (extent.width == UINT_MAX)
+			return VK_INCOMPLETE;
+		if ((capabilities.supportedUsageFlags & VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT) == 0)
+		{
+			return VK_INCOMPLETE;
+		}
+
+		VkSurfaceFormatKHR formats[maxSurfaceFormats]{};
+		uint32_t surfaceFormatCount = 0;
+		error = vkGetPhysicalDeviceSurfaceFormatsKHR(device.physicalDevice, device.surface, &surfaceFormatCount, nullptr);
+		if (error != VK_SUCCESS)
+			return error;
+		if (surfaceFormatCount == 0 || surfaceFormatCount > maxSurfaceFormats)
+			return VK_INCOMPLETE;
+		error = vkGetPhysicalDeviceSurfaceFormatsKHR(device.physicalDevice, device.surface, &surfaceFormatCount, formats);
+		if (error != VK_SUCCESS)
+			return error;
+
+		const VkFormat requestedFormat = toVk(swapchain.format);
+		bool formatSupported = false;
+		for (uint32_t index = 0; index < surfaceFormatCount; ++index)
+		{
+			if ((formats[index].format == requestedFormat ||
+				formats[index].format == VK_FORMAT_UNDEFINED) &&
+				formats[index].colorSpace == swapchain.colorSpace)
+			{
+				formatSupported = true;
+				break;
+			}
+		}
+		if (!formatSupported)
+			return VK_INCOMPLETE;
+
+		if (extent.width == 0 || extent.height == 0)
+		{
+			swapchain.width = 0;
+			swapchain.height = 0;
+			swapchain.recreateRequired = true;
+			return VK_ERROR_INITIALIZATION_FAILED;
+		}
+
+		uint32_t requestedImageCount = device.presentContextCount;
+		if (requestedImageCount < capabilities.minImageCount) requestedImageCount = capabilities.minImageCount;
+		if (capabilities.maxImageCount != 0 && requestedImageCount > capabilities.maxImageCount) requestedImageCount = capabilities.maxImageCount;
+		if (requestedImageCount == 0 || requestedImageCount > maxSwapchainImages) return VK_ERROR_INITIALIZATION_FAILED;
+
+		const VkCompositeAlphaFlagBitsKHR compositeAlpha = chooseCompositeAlpha(capabilities.supportedCompositeAlpha);
+		if (!compositeAlpha)
+		{
+			//if (error_callback) error_callback("The display surface exposes no supported composite alpha mode.", false);
+			return VK_INCOMPLETE;
+		}
+		const VkSwapchainKHR oldHandle = swapchain.handle;
+		const VkSwapchainPresentModesCreateInfoKHR presentModesInfo{
+			.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_PRESENT_MODES_CREATE_INFO_KHR,
+			.presentModeCount = 1,
+			.pPresentModes = &presentMode,
+		};
+		const VkSwapchainCreateInfoKHR createInfo{
+			.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
+			.pNext = &presentModesInfo,
+			.surface = device.surface,
+			.minImageCount = requestedImageCount,
+			.imageFormat = requestedFormat,
+			.imageColorSpace = swapchain.colorSpace,
+			.imageExtent = extent,
+			.imageArrayLayers = 1,
+			.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+			.imageSharingMode = device.queueFamilyCount > 1 ? VK_SHARING_MODE_CONCURRENT : VK_SHARING_MODE_EXCLUSIVE,
+			.queueFamilyIndexCount = device.queueFamilyCount,
+			.pQueueFamilyIndices = device.queueFamiliesIndex,
+			.preTransform = capabilities.currentTransform,
+			.compositeAlpha = compositeAlpha,
+			.presentMode = presentMode,
+			.clipped = VK_TRUE,
+			.oldSwapchain = oldHandle,
+		};
+		VkSwapchainKHR newHandle = VK_NULL_HANDLE;
+		error = vkCreateSwapchainKHR(device.device, &createInfo, nullptr, &newHandle);
+		if (error != VK_SUCCESS)
+		{
+			retireSwapchainHandle(swapchain);
+			return error;
+		}
+
+		VkImage images[maxSwapchainImages]{};
+		uint32_t imageCount = 0;
+		VkResult result = vkGetSwapchainImagesKHR(device.device, newHandle, &imageCount, nullptr);
+		if (result != VK_SUCCESS || imageCount == 0 || imageCount > maxSwapchainImages)
+		{
+			vkDestroySwapchainKHR(device.device, newHandle, nullptr);
+			retireSwapchainHandle(swapchain);
+			return result;
+		}
+		result = vkGetSwapchainImagesKHR(device.device, newHandle, &imageCount, images);
+		if (result != VK_SUCCESS)
+		{
+			vkDestroySwapchainKHR(device.device, newHandle, nullptr);
+			retireSwapchainHandle(swapchain);
+			return result;
+		}
+
+		VkImageView views[maxSwapchainImages]{};
+		for (uint32_t index = 0; index < imageCount; ++index)
+		{
+			const VkImageViewCreateInfo view_info{
+				.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+				.image = images[index],
+				.viewType = VK_IMAGE_VIEW_TYPE_2D,
+				.format = requestedFormat,
+				.subresourceRange = {
+					.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+					.levelCount = 1,
+					.layerCount = 1,
+				},
+			};
+			result = vkCreateImageView(device.device, &view_info, nullptr, &views[index]);
+			if (result != VK_SUCCESS)
+			{
+				for (uint32_t created = 0; created < index; ++created)
+				{
+					vkDestroyImageView(device.device, views[created], nullptr);
+				}
+				vkDestroySwapchainKHR(device.device, newHandle, nullptr);
+				retireSwapchainHandle(swapchain);
+				return result;
+			}
+		}
+
+		retireSwapchainHandle(swapchain);
+		swapchain.handle = newHandle;
+		swapchain.imageCount = imageCount;
+		swapchain.width = extent.width;
+		swapchain.height = extent.height;
+		swapchain.transform = capabilities.currentTransform;
+		swapchain.compositeAlpha = compositeAlpha;
+		swapchain.recreateRequired = false;
+		for (uint32_t index = 0; index < imageCount; ++index)
+		{
+			swapchain.images[index] = images[index];
+			swapchain.renderViews[index] = {
+				.state = &device,
+				.view = views[index],
+				.width = extent.width,
+				.height = extent.height,
+				.swapchainView = true,
+			};
+		}
+		return VK_SUCCESS;
+	}
+
+	// Format related methods
+	VkFormatFeatureFlags2 optimalFormatFeatures(VkPhysicalDevice physicalDevice, Format format)
+	{
+		VkFormatProperties3 properties3{
+			.sType = VK_STRUCTURE_TYPE_FORMAT_PROPERTIES_3,
+		};
+		VkFormatProperties2 properties2{
+			.sType = VK_STRUCTURE_TYPE_FORMAT_PROPERTIES_2,
+			.pNext = &properties3,
+		};
+		vkGetPhysicalDeviceFormatProperties2(physicalDevice, toVk(format), &properties2);
+		return properties3.optimalTilingFeatures;
+	}
 
 	// Checks if device we are inspecting has required features
 	VkResult inspectDevice(VkPhysicalDevice device, const DesiredDevice& desc, const char* maintenanceExtensionName, VkSurfaceKHR surface, Candidate& output)
@@ -340,7 +996,7 @@ namespace core {
 		{
 			return VK_INCOMPLETE;
 		}
-
+		result.enabledExtensions = enabledDeviceExtensions;
 		output = result;
 		return VK_SUCCESS;
 	}
@@ -518,26 +1174,222 @@ namespace core {
 		vkEnumeratePhysicalDevices(device->instance, &deviceCount, nullptr);
 		physicalDeviceList.resize(deviceCount);
 		vkEnumeratePhysicalDevices(device->instance, &deviceCount, physicalDeviceList.data());
-		Candidate selects{};
+		Candidate selected{};
 		for (const VkPhysicalDevice& physicalDevice : physicalDeviceList)
 		{
 			Candidate candidate{};
 			if (inspectDevice(physicalDevice, desc, foundMaintenanceName, device->surface, candidate) == VK_SUCCESS)
 			{
-				selects = candidate;
+				selected = candidate;
 				break;
 			}
 		}
 
 		// Set device properties
+		// TODO: add format picking
+		device->physicalDevice	 = selected.physicalDevice;
+		device->deviceProperties = selected.properties;
+		device->deviceHeapProps  = selected.heapProperties;
+		device->deviceMemProps   = selected.memoryProperties;
+		device->maxTimelineValueDifference = selected.vulkan12Properties.maxTimelineSemaphoreValueDifference;
+		device->deviceHeapProps.pNext = nullptr;
+		// Find the best formats we have avaiable on the system
+		for (uint32_t value = 0; value < formatCount; ++value)
+		{
+			device->formatFeatures[value] = optimalFormatFeatures(
+				device->physicalDevice, static_cast<Format>(value));
+		}
 
 
+		DesiredFeatures enabledFeatures(true, selected.unifiedImageLayouts, selected.addressCommands);
+		device->textureCompressionEtc2 = selected.textureCompressionEtc2;
+		enabledFeatures.core.features.imageCubeArray = selected.imageCubeArray;
+		enabledFeatures.core.features.samplerAnisotropy = VK_TRUE;
+		enabledFeatures.core.features.shaderInt16 = VK_TRUE;
+		enabledFeatures.core.features.depthBiasClamp = VK_TRUE;
+		enabledFeatures.core.features.independentBlend = VK_TRUE;
+		enabledFeatures.core.features.textureCompressionBC = selected.textureCompressionBc;
+		enabledFeatures.core.features.textureCompressionASTC_LDR = selected.textureCompressionAstc;
+		enabledFeatures.core.features.textureCompressionETC2 = selected.textureCompressionEtc2;
+		enabledFeatures.core.features.fragmentStoresAndAtomics = VK_TRUE;
+		enabledFeatures.core.features.vertexPipelineStoresAndAtomics = VK_TRUE;
+		enabledFeatures.core.features.shaderStorageImageReadWithoutFormat = VK_TRUE;
+		enabledFeatures.core.features.shaderStorageImageWriteWithoutFormat = VK_TRUE;
+		enabledFeatures.core.features.multiDrawIndirect = VK_TRUE;
+		enabledFeatures.core.features.drawIndirectFirstInstance = VK_TRUE;
+		enabledFeatures.vulkan11.storageBuffer16BitAccess = VK_TRUE;
+		enabledFeatures.vulkan11.storagePushConstant16 = VK_TRUE;
+		enabledFeatures.vulkan11.storageInputOutput16 = selected.storageInputOutput16;
+		enabledFeatures.vulkan11.shaderDrawParameters = VK_TRUE;
+		enabledFeatures.vulkan12.shaderFloat16 = VK_TRUE;
+		enabledFeatures.vulkan12.scalarBlockLayout = VK_TRUE;
+		enabledFeatures.vulkan12.timelineSemaphore = VK_TRUE;
+		enabledFeatures.vulkan12.hostQueryReset = selected.timestamps[0] || selected.timestamps[1] || selected.timestamps[2];
+		enabledFeatures.vulkan12.bufferDeviceAddress = VK_TRUE;
+		enabledFeatures.vulkan13.synchronization2 = VK_TRUE;
+		enabledFeatures.vulkan13.dynamicRendering = VK_TRUE;
+		enabledFeatures.vulkan13.maintenance4 = VK_TRUE;
+		enabledFeatures.vulkan14.maintenance5 = VK_TRUE;
+		enabledFeatures.descriptorHeap.descriptorHeap = VK_TRUE;
+		enabledFeatures.addressCommands.deviceAddressCommands = selected.addressCommands;
+		enabledFeatures.untypedPointers.shaderUntypedPointers = VK_TRUE;
+		enabledFeatures.unifiedImageLayouts.unifiedImageLayouts = selected.unifiedImageLayouts ? VK_TRUE : VK_FALSE;
+		enabledFeatures.meshShader.taskShader = VK_TRUE;
+		enabledFeatures.meshShader.meshShader = VK_TRUE;
+		enabledFeatures.swapchainMaintenance1.swapchainMaintenance1 = VK_TRUE;
+
+		// Get queue information from each assigned family
+		const uint32_t requestedQueueCounts[]{ desc.desiredGraphicsQueues, desc.desiredComputeQueues, desc.desiredTransferQueues };
+		uint32_t queueCountsOfTypes[queueTypeCount]{};
+		for (uint32_t type = 0; type < queueTypeCount; ++type)
+		{
+			queueCountsOfTypes[type] = requestedQueueCounts[type] < selected.queueCounts[type] ? requestedQueueCounts[type] : selected.queueCounts[type];
+			device->totalQueueCount += queueCountsOfTypes[type];
+		}
+
+		device->queueArray = new Queue[device->totalQueueCount];
+		float* queueProrities = new float[device->totalQueueCount];
+		for (uint32_t index = 0; index < device->totalQueueCount; ++index)
+			queueProrities[index] = 1.0f; // Start at highest priority?
+
+		// Create the create info structs for our new queues
+		// NOTE: create info goes by families, hence why we only have 3 create infos from the total queue types
+		VkDeviceQueueCreateInfo queueCreateInfos[queueTypeCount];
+		uint32_t firstQueue = 0;
+		for (uint32_t type = 0; type < queueTypeCount; ++type)
+		{
+			if (queueCountsOfTypes[type] == 0) continue;
+			device->queueFamiliesIndex[device->queueFamilyCount] = selected.queueFamilies[type];
+			queueCreateInfos[device->queueFamilyCount] =
+			{
+				.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
+				.queueFamilyIndex = selected.queueFamilies[type],
+				.queueCount = queueCountsOfTypes[type],
+				.pQueuePriorities = queueProrities + firstQueue,
+			};
+			firstQueue += queueCountsOfTypes[type]; // Increase priority for each later queue?!?!? supposedly priority goes from 0.0-1.0(lowest to highest)
+		}
+
+		
+		// TODO: queueCreateInfos seems to be creating 3 queue families because of the const queueTypeCount when we only are using 1 family in this case
+		// Potentiallialy remove? It works however since default of .pNext is nullptr I believe
 		// Get device info and create device
-		//VkDeviceCreateInfo deviceInfo
-		//{
-		//	.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
+		VkDeviceCreateInfo deviceInfo
+		{
+			.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
+			.pNext = &enabledFeatures.core,
+			.queueCreateInfoCount = device->queueFamilyCount,
+			.pQueueCreateInfos = queueCreateInfos,
+			.enabledExtensionCount = (uint32_t) selected.enabledExtensions.size(),
+			.ppEnabledExtensionNames = selected.enabledExtensions.data(),
+		};
+		VkResult deviceCreationResult = vkCreateDevice(device->physicalDevice, &deviceInfo, nullptr, &device->device);
+		if (deviceCreationResult != VK_SUCCESS)
+		{
+			throw std::runtime_error("Failed to create logical device!");
+		}
+		delete[] queueProrities;
 
-		//}
+		// Get that queue Info
+		firstQueue = 0;
+		for (uint32_t type = 0; type < queueTypeCount; ++type)
+		{
+			for (uint32_t index = 0; index < queueCountsOfTypes[type]; ++index)
+			{
+				Queue& queue = device->queueArray[firstQueue++];
+				queue.familyIndex = selected.queueFamilies[type];
+				queue.timestamps = selected.timestamps[type];
+				vkGetDeviceQueue(device->device, queue.familyIndex, index, &queue.queue); // TODO: make this vkGetDeviceQueue2
+			}
+		}
+		// TODO: Get this done, not needed immediately hence why I skipped it
+		//if (!supports_gpu_heap_memory(*state) || !select_texture_memory_type(*state))
+		//	return fail_device_creation(state, Error::unsupported);
+
+		// Fill in device functions
+		device->functions.writeSamplerDescriptors = loadDeviceProc<PFN_vkWriteSamplerDescriptorsEXT>(device->device, "vkWriteSamplerDescriptorsEXT");
+		device->functions.writeResourceDescriptors = loadDeviceProc<PFN_vkWriteResourceDescriptorsEXT>(device->device, "vkWriteResourceDescriptorsEXT");
+		device->functions.cmdBindSamplerHeap = loadDeviceProc<PFN_vkCmdBindSamplerHeapEXT>(device->device, "vkCmdBindSamplerHeapEXT");
+		device->functions.cmdBindTextureHeap = loadDeviceProc<PFN_vkCmdBindResourceHeapEXT>(device->device, "vkCmdBindResourceHeapEXT");
+		device->functions.cmdPushData = loadDeviceProc<PFN_vkCmdPushDataEXT>(device->device, "vkCmdPushDataEXT");
+		device->functions.cmdDrawMeshTasks = loadDeviceProc<PFN_vkCmdDrawMeshTasksEXT>(device->device, "vkCmdDrawMeshTasksEXT");
+		if (!device->functions.writeSamplerDescriptors || !device->functions.writeResourceDescriptors ||
+			!device->functions.cmdBindSamplerHeap || !device->functions.cmdBindTextureHeap ||
+			!device->functions.cmdPushData || !device->functions.cmdDrawMeshTasks)
+		{
+			throw std::runtime_error("Failure to get required device functions!");
+		}
+		if (selected.addressCommands)
+		{
+			device->functions.cmdBindIndexBuffer = loadDeviceProc<PFN_vkCmdBindIndexBuffer3KHR>(device->device, "vkCmdBindIndexBuffer3KHR");
+			device->functions.cmdDrawIndirect = loadDeviceProc<PFN_vkCmdDrawIndirect2KHR>(device->device, "vkCmdDrawIndirect2KHR");
+			device->functions.cmdDrawIndexedIndirect = loadDeviceProc<PFN_vkCmdDrawIndexedIndirect2KHR>(device->device, "vkCmdDrawIndexedIndirect2KHR");
+			device->functions.cmdDispatchIndirect = loadDeviceProc<PFN_vkCmdDispatchIndirect2KHR>(device->device, "vkCmdDispatchIndirect2KHR");
+			device->functions.cmdDrawMeshTasksIndirect = loadDeviceProc<PFN_vkCmdDrawMeshTasksIndirect2EXT>(device->device, "vkCmdDrawMeshTasksIndirect2EXT");
+			device->functions.cmdCopyMemory = loadDeviceProc<PFN_vkCmdCopyMemoryKHR>(device->device, "vkCmdCopyMemoryKHR");
+			device->functions.cmdCopyMemoryToImage = loadDeviceProc<PFN_vkCmdCopyMemoryToImageKHR>(device->device, "vkCmdCopyMemoryToImageKHR");
+			device->functions.cmdCopyImageToMemory = loadDeviceProc<PFN_vkCmdCopyImageToMemoryKHR>(device->device, "vkCmdCopyImageToMemoryKHR");
+			if (!device->functions.cmdBindIndexBuffer || !device->functions.cmdDrawIndirect || !device->functions.cmdDrawIndexedIndirect ||
+				!device->functions.cmdDispatchIndirect || !device->functions.cmdDrawMeshTasksIndirect || !device->functions.cmdCopyMemory ||
+				!device->functions.cmdCopyMemoryToImage || !device->functions.cmdCopyImageToMemory)
+			{
+				throw std::runtime_error("Failure to get addressCommands device functions despite address commands supposdely being supported!");
+			}
+		}
+		else
+		{
+			device->functions.cmdDrawMeshTasksIndirectBuffer = loadDeviceProc<PFN_vkCmdDrawMeshTasksIndirectEXT>(device->device, "vkCmdDrawMeshTasksIndirectEXT");
+			if (!device->functions.cmdDrawMeshTasksIndirectBuffer)
+				throw std::runtime_error("Failure to get addressCommands device functions despite address commands supposdely being supported!");
+			//device->bufferMap = new detail::BufferAddressMap{}; TODO: Get bufferMap variable
+		}
+
+		const VkSemaphoreTypeCreateInfo typeInfo{
+			.sType = VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO,
+			.semaphoreType = VK_SEMAPHORE_TYPE_TIMELINE,
+		};
+		const VkSemaphoreCreateInfo semaphoreInfo{
+			.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
+			.pNext = &typeInfo,
+		};
+		VkResult semaphoreResult = vkCreateSemaphore(device->device, &semaphoreInfo, nullptr, &device->presentationRetirement);
+		if (semaphoreResult != VK_SUCCESS)
+		{
+			throw std::runtime_error("Failed to create device semaphore!");
+		}
+
+		for (uint32_t index = 0; index < device->presentContextCount; ++index)
+		{
+			VkResult presentContextCreationResult = device->createPresentContext(device->presentContexts[index]);
+			if (presentContextCreationResult != VK_SUCCESS)
+				throw std::runtime_error("Failed to create present contexts");
+		}
+
+		device->specs = {
+			.deviceName = device->deviceProperties.properties.deviceName,
+			.queueCount = device->totalQueueCount,
+			.graphicsQueueCount = queueCountsOfTypes[0],
+			.computeQueueCount = queueCountsOfTypes[1],
+			.transferQueueCount = queueCountsOfTypes[2],
+			.copyTextureGranularity = selected.copyTextureGranularity,
+			.maxPushDataSize = device->deviceHeapProps.maxPushDataSize,
+			.textureHeapAlignment = device->textureHeapAlignment,
+			.timestampPeriodns = selected.properties.properties.limits.timestampPeriod,
+			.subTexelPrecisionBits = selected.properties.properties.limits.subTexelPrecisionBits,
+			.textureCompressionBc = selected.textureCompressionBc,
+			.textureCompressionAstc = selected.textureCompressionAstc,
+			.storageInputOutput16 = selected.storageInputOutput16,
+			.indirectMeshDraw = true,
+		};
+
+		device->swapchain = new Swapchain;
+		device->swapchain->state = device;
+		device->swapchain->format = desc.swapchainFormat;
+		device->swapchain->colorSpace = desc.swapchainColorSpace == ColorSpace::extended_srgb_linear
+			? VK_COLOR_SPACE_EXTENDED_SRGB_LINEAR_EXT : VK_COLOR_SPACE_SRGB_NONLINEAR_KHR;
+		VkResult swapchainCreationResult = recreateSwapchain(*device->swapchain);
+		if (swapchainCreationResult != VK_SUCCESS)
+			throw std::runtime_error("Failed to create swapchain!");
 
 		// Create debug util
 
@@ -549,11 +1401,52 @@ namespace core {
 
 		return VkResult();
 	}
-	//VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity, VkDebugUtilsMessageTypeFlagsEXT messageType, const VkDebugUtilsMessengerCallbackDataEXT* pCallbackData, void* pUserData)
-	//{
 
 
+	void destroyOwnedSwapchain(Device& device) noexcept
+	{
+		if (!device.swapchain)
+			return;
+		Swapchain* swapchain = device.swapchain;
+		//assert(!swapchain->acquired && device.acquired_swapchain != swapchain);
+		retireSwapchainHandle(*swapchain);
+		swapchain->state = nullptr;
+		delete swapchain;
+		device.swapchain = nullptr;
+	}
 
-	//	return VK_SUCCESS;
-	//}
+	void destroyPso(PSO* pso)
+	{
+		delete pso;
+	}
+
+	void destroyCommandPool(CommandPool* pool)
+	{
+		if (!pool) return;
+		while (pool->first)
+		{
+			CommandBuffer* commands = pool->first;
+			//assert(!commands->swapchain && "an acquired swapchain image must be presented before destroying its command pool");
+			pool->first = commands->next;
+			if (commands->timestampPool) vkDestroyQueryPool(pool->state->device, commands->timestampPool, nullptr);
+			free(commands->timestampDestinations);
+			free(commands->timestampResults);
+			delete commands;
+		}
+		vkDestroyCommandPool(pool->state->device, pool->commandPool, nullptr);
+		delete pool;
+	}
+
+	void destroyTimelineSemaphore(TimelineSemaphore* semaphore)
+	{
+		if (!semaphore) return;
+		vkDestroySemaphore(semaphore->state->device, semaphore->semaphore, nullptr);
+		delete semaphore;
+	}
+
+	void destroyDevice(Device* device)
+	{
+		delete device;
+	}
+
 }
