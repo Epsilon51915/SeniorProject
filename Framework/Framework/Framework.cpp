@@ -83,7 +83,7 @@ void mainLoop()
 	int loop = 0;
 
 	//Device* device = create_device({.window = window, .swapchain_format = Format::bgra8_srgb }).device;
-	Device* device = createDevice().newDevice;
+	Device* device = createDevice({.window = window}).newDevice;
 
 	//std::vector<char> vertexShader = readShader("vert.spv", "");
 	//std::vector<char> fragmentShader = readShader("frag.spv", "");

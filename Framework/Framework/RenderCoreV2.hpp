@@ -4,7 +4,7 @@
 *	A revised render core file to improve on the disorganization of the original, and fit it better to our project goals.
 *	Focus will be on useability, better automation of certain tasks for the user, and generally better documention.
 *	This will also see us (attempt) to implement a custom render pipeline
-*	Unlike in noapi, it is assumed we want to present something.
+*	Unlike in noapi, it is assumed we want to present something. As such, any checks for an existing surface, or presentation value, have been removed or replaced
 *	TODO: Create a documentation.readme so we can begin cataloging new changes/features for future reference
 *	TODO: Properly apply inline/unnamed namespaces: https://www.learncpp.com/cpp-tutorial/unnamed-and-inline-namespaces/
 */
@@ -31,6 +31,13 @@ namespace core
 		gpu_only,
 		readback,
 	};
+	struct uint32x3
+	{
+		uint32_t x = 0;
+		uint32_t y = 0;
+		uint32_t z = 0;
+	};
+
 
 
 	/// Foward decleration of structs used outside of header ONLY as pointers
@@ -100,16 +107,18 @@ namespace core
 	};
 	struct CommandPool;
 
-
+	struct Candidate;
 
 	/// Forward decleration of most methods to be defined in RenderCore.cpp
 	void getQueueInfo(VkPhysicalDevice device);
-	void inspectDevice(VkPhysicalDevice device, const char* maintenanceExtensionName, Candidate& output);
+	// NOTE: maintenanceExtensionName currently isn't used, TODO: add safety check maybe to swapchain maintenance check
+	VkResult inspectDevice(VkPhysicalDevice device, const DesiredDevice& desc, const char* maintenanceExtensionName, VkSurfaceKHR surface, Candidate& output);
+	bool hasName(const std::vector<VkExtensionProperties>& extensionArr, const char* nameCheck);
 	VkResult getInstanceExtensions(std::vector<VkExtensionProperties>& extensions);
 	VkResult getDeviceInstanceExtensions(std::vector<VkExtensionProperties>& extensions, VkPhysicalDevice device);
 	VkResult getInstanceLayerProperties(std::vector<VkLayerProperties>& extensions);
 	// Find physical device to be used and create the Vulkan logical device
-	DeviceInit createDevice();
+	DeviceInit createDevice(const DesiredDevice desc);
 	// Create the debug method callback IF debug compilation mode
 	VkResult createDebugUtil();
 	//static VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
