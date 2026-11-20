@@ -19,6 +19,6 @@
     "\\out\\build",
     "\\Slang Shaders"
   ],
-  "SelectedNode": "\\Framework\\RenderCore.cpp",
+  "SelectedNode": "\\Framework\\RenderCore.hpp",
   "PreviewInSolutionExplorer": false
 }

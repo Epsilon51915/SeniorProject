@@ -95,11 +95,90 @@ namespace core
 	// NOTE: Not sure if this is needed. Add either more options or remove it
 	enum class ColorSpace : uint32_t { srgb, extended_srgb_linear };
 
+	enum class RenderingFlags : uint32_t
+	{
+		none = 0,
+		suspending = 2,
+		resuming = 4,
+	};
+	enum class LoadOp : uint8_t
+	{
+		load,
+		clear,
+		discard,
+	};
+
+	enum class StoreOp : uint8_t
+	{
+		store,
+		discard,
+	};
+
+	enum class CompareOp : uint8_t
+	{
+		never,
+		less,
+		equal,
+		less_equal,
+		greater,
+		not_equal,
+		greater_equal,
+		always,
+	};
+
+	enum class StencilOp : uint8_t
+	{
+		keep,
+		zero,
+		replace,
+		increment_clamp,
+		decrement_clamp,
+		invert,
+		increment_wrap,
+		decrement_wrap,
+	};
+
+	enum class BlendFactor : uint8_t
+	{
+		zero,
+		one,
+		source_color,
+		one_minus_source_color,
+		destination_color,
+		one_minus_destination_color,
+		source_alpha,
+		one_minus_source_alpha,
+		destination_alpha,
+		one_minus_destination_alpha,
+		source_alpha_saturate,
+	};
+
+	enum class BlendOp : uint8_t
+	{
+		add,
+		subtract,
+		reverse_subtract,
+		minimum,
+		maximum,
+	};
+
+	enum class CullMode : uint8_t
+	{
+		none,
+		clockwise,
+		counter_clockwise,
+	};
+
 	struct uint32x3
 	{
 		uint32_t x = 0;
 		uint32_t y = 0;
 		uint32_t z = 0;
+	};
+	struct uint32x2
+	{
+		uint32_t x = 0;
+		uint32_t y = 0;
 	};
 
 	/// Foward decleration of structs used outside of header ONLY as pointers
@@ -119,6 +198,11 @@ namespace core
 	{
 		Device* state = nullptr;
 		VkSemaphore semaphore = VK_NULL_HANDLE;
+	};
+	struct TimelinePoint
+	{
+		TimelineSemaphore* semaphore = nullptr;
+		uint64_t value = 0;
 	};
 	struct PresentContext
 	{
@@ -168,13 +252,142 @@ namespace core
 	struct Scissor;
 	struct ShaderStage
 	{
-		const char* shaderCode;
-		const char* entryPoint;
-		const char* stageName;
+		const char* entryPoint = nullptr;
+		const char* stageName = nullptr;
+		std::vector<char> code;
 	};
 	struct CommandPool;
 
 	struct Candidate;
+
+	struct Viewport
+	{
+		float x = 0.0f;
+		float y = 0.0f;
+		float width = 1.0f;
+		float height = 1.0f;
+		float minDepth = 0.0f;
+		float maxDepth = 1.0f;
+	};
+	struct Scissor
+	{
+		int32_t x = 0;
+		int32_t y = 0;
+		uint32_t width = 1;
+		uint32_t height = 1;
+	};
+
+	struct BlendComponentState
+	{
+		BlendFactor source = BlendFactor::one;
+		BlendFactor destination = BlendFactor::zero;
+		BlendOp operation = BlendOp::add;
+	};
+
+	struct BlendState
+	{
+		bool enabled = false;
+		BlendComponentState color = {};
+		BlendComponentState alpha = {};
+	};
+
+	struct ColorTargetDesc
+	{
+		Format format = Format::undefined;
+		BlendState blend = {};
+		uint8_t writeMask = 0xf;
+	};
+
+	struct ClearColor
+	{
+		float r = 0.0f;
+		float g = 0.0f;
+		float b = 0.0f;
+		float a = 0.0f;
+	};
+
+	struct ColorAttachment
+	{
+		RenderView* renderView = nullptr;
+		LoadOp load = LoadOp::load;
+		StoreOp store = StoreOp::store;
+		ClearColor clear = {};
+	};
+
+	struct StencilFaceState
+	{
+		CompareOp compare = CompareOp::always;
+		StencilOp fail = StencilOp::keep;
+		StencilOp pass = StencilOp::keep;
+		StencilOp depth_fail = StencilOp::keep;
+		uint8_t reference = 0;
+	};
+
+	struct DepthStencilState
+	{
+		bool depthTest = false;
+		bool depthWrite = false;
+		CompareOp depth_compare = CompareOp::less_equal;
+		bool stencil_test = false;
+		uint8_t stencil_read_mask = 0xff;
+		uint8_t stencil_write_mask = 0xff;
+		StencilFaceState front = {};
+		StencilFaceState back = {};
+	};
+
+	struct DepthAttachment
+	{
+		RenderView* renderView = nullptr;
+		LoadOp load = LoadOp::load;
+		StoreOp store = StoreOp::store;
+		float clear = 1.0f;
+	};
+
+	struct StencilAttachment
+	{
+		RenderView* renderView = nullptr;
+		LoadOp load = LoadOp::load;
+		StoreOp store = StoreOp::store;
+		uint8_t clear = 0;
+	};
+
+	struct RenderingDesc
+	{
+		std::vector<ColorAttachment> colors;
+		DepthAttachment depth = {};
+		StencilAttachment stencil = {};
+	};
+
+	struct RasterizationState
+	{
+		CullMode cull = CullMode::none;
+		float depthBiasConstant = 0.0f;
+		float depthBiasClamp = 0.0f;
+		float depthBiasSlope = 0.0f;
+	};
+
+	struct GraphicsPSODesc
+	{
+		ShaderStage vertex = {};
+		ShaderStage fragment = {};
+		std::vector<ColorTargetDesc> colorTargets = {};
+		Format depthFormat = Format::undefined;
+		Format stencilFormat = Format::undefined;
+		RasterizationState rasterization = {};
+	};
+
+	struct SubmitDesc
+	{
+		std::vector<CommandBuffer*> commands;
+		std::vector<TimelinePoint> waits;
+		TimelinePoint completion = {};
+	};
+
+	struct SwapchainFrame
+	{
+		RenderView* renderView = nullptr;
+		uint32x2 extent = {};
+	};
 
 	/// Forward decleration of most methods to be defined in RenderCore.cpp
 	// NOTE: maintenanceExtensionName currently isn't used, TODO: add safety check maybe to swapchain maintenance check
@@ -192,12 +405,38 @@ namespace core
 	//	const VkDebugUtilsMessengerCallbackDataEXT* pCallbackData,
 	//	void* pUserData);
 
+	void setViewport(CommandBuffer* commands, const Viewport& viewport);
+	void setScissor(CommandBuffer* commands, const Scissor& scissor);
+	void setDepthStencil(CommandBuffer* commands, const DepthStencilState& state);
+
+	void gpuBeginRenderPass(CommandBuffer* buffer, const RenderingDesc& desc, RenderingFlags flags = RenderingFlags::none);
+	void gpuEndRenderPass(CommandBuffer* buffer);
+	void draw(CommandBuffer* commands, const void* root, uint32_t vertexCount, uint32_t instanceCount = 1, uint32_t firstVertex = 0,
+		uint32_t firstInstance = 0);
+	void submitCommands(Device* device, const SubmitDesc& desc, uint32_t queue_index, VkSemaphore wait_semaphore, VkSemaphore signal_semaphore);
+	void submitAndPresent(Device* device, const SubmitDesc& desc);
+	void emitRootPointer(CommandBuffer* commands, const void* root);
+
+	SwapchainFrame acquire(CommandBuffer* commands);
+	bool swapchainSurfaceConfigurationChanged(const Swapchain& swapchain);
+
+	CommandPool* createCommandPool(Device* device, uint32_t queueIndex = 0);
+	void resetCommandPool(CommandPool* pool);
+	CommandBuffer* beginCommands(CommandPool* pool);
+	void recordImageBarriers(VkCommandBuffer commandBuffer, const VkImageMemoryBarrier2* barriers, uint32_t numBarriers);
+	void endCommands(CommandBuffer* buffer);
+
+	TimelineSemaphore* createTimelineSemaphore(Device* device, uint64_t initial_value = 0);
+	void waitTimeline(TimelinePoint point);
+	void waitIdle(Device* device);
+
 	/// Shader methods
 	// Refer to orignial render core for my little theory on this
 	// Take an array of the container and dynamically create a new pipeline
 	PSO* createCustomPipeline(CustomPipelineContainer& container);
-	PSO* createStandardPipeline();
-	const char* readShader(const char* fileName, const char* filePath);
+	PSO* createGraphicsPSO(Device* device, GraphicsPSODesc graphicsDesc);
+	void bindPSO(CommandBuffer* commands, const PSO* pso);
+	std::vector<char> readShader(const char* fileName, const char* filePath);
 
 	/// Memory Management methods
 	template <typename T>

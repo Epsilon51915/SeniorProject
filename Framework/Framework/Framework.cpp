@@ -71,7 +71,7 @@ void createWindow()
 	glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
 	window = glfwCreateWindow(1280, 720, "Framework", NULL, NULL);
 	// Set up input callbacks and captures the cursor for camera controls
-	glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+	//glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
 	glfwSetCursorPosCallback(window, mouseCallback);
 	//TODO: glfwSetScrollCallback(window, scrollCallback);
 
@@ -83,71 +83,73 @@ void mainLoop()
 	int loop = 0;
 
 	//Device* device = create_device({.window = window, .swapchain_format = Format::bgra8_srgb }).device;
-	Device* device = createDevice({.window = window}).newDevice;
+	Device* device = createDevice({.window = window, .swapchainFormat = Format::bgra8_srgb }).newDevice;
 
-	//std::vector<char> vertexShader = readShader("vert.spv", "");
-	//std::vector<char> fragmentShader = readShader("frag.spv", "");
+	std::vector<char> vertexShader = readShader("vert.spv", "");
+	std::vector<char> fragmentShader = readShader("frag.spv", "");
+	// Shaders unable to read!?!?
+	GraphicsPSODesc graphicsPSODesc;
+	graphicsPSODesc.vertex.code = vertexShader;
+	graphicsPSODesc.vertex.entryPoint = "vertMain";
 
-	//GraphicsPSODesc graphicsPSODesc;
-	//graphicsPSODesc.vertex.code = vertexShader;
-	//graphicsPSODesc.vertex.entryPoint = "vertMain";
+	graphicsPSODesc.fragment.code = fragmentShader;
+	graphicsPSODesc.fragment.entryPoint = "fragMain";
 
-	//graphicsPSODesc.fragment.code = fragmentShader;
-	//graphicsPSODesc.fragment.entryPoint = "fragMain";
+	graphicsPSODesc.colorTargets = { { .format = Format::bgra8_srgb } };
 
 
-	//PSO* trianglePSO = createGraphicsPSO(device, graphicsPSODesc);
+	PSO* trianglePSO = createGraphicsPSO(device, graphicsPSODesc); // also broken?
 
-	//TimelinePoint latestCompletion{ .semaphore = createTimelineSemaphore(device) };
+	TimelinePoint latestCompletion{ .semaphore = createTimelineSemaphore(device) };
 
 	//// create command buffers
-	//CommandPool* commandPools[] = { createCommandPool(device), createCommandPool(device) };
+	CommandPool* commandPools[] = { createCommandPool(device), createCommandPool(device) };
 
-	//while (!glfwWindowShouldClose(window))
-	//{
+	while (!glfwWindowShouldClose(window))
+	{
 	//	glfwPollEvents();
 	//	// Temp: Testing camera
 	//	glm::vec3 p = camera.getPosition();
 	//	glm::vec3 f = camera.getFront();
 	//	printf("Position: %.2f, %.2f, %.2f | Front:  %.2f, %.2f, %.2f \n", p.x, p.y, p.z, f.x, f.y, f.z);
 
-	//	//Esc to quit now since cursor is now captured for camera
-	//	if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
-	//	{
-	//		glfwSetWindowShouldClose(window, true);
-	//	}
+		//Esc to quit now since cursor is now captured for camera
+		if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
+		{
+			glfwSetWindowShouldClose(window, true);
+		}
 
-	//	if (latestCompletion.value >= 2)
-	//		wait_timeline({ .semaphore = latestCompletion.semaphore, .value = latestCompletion.value - 1 });
-	//	CommandPool* commandPool = commandPools[latestCompletion.value % 2];
-	//	resetCommandPool(commandPool);
+		if (latestCompletion.value >= 2)
+			waitTimeline({ .semaphore = latestCompletion.semaphore, .value = latestCompletion.value - 1 });
+		CommandPool* commandPool = commandPools[latestCompletion.value % 2];
+		resetCommandPool(commandPool);
 
-	//	CommandBuffer* commands = beginCommands(commandPool);
-	//	const SwapchainFrame frame = acquire(commands);
+		CommandBuffer* commands = beginCommands(commandPool);
+		const SwapchainFrame frame = acquire(commands);
 
-	//	
+		
 
-	//	gpuBeginRenderPass(commands, {
-	//		.colors = { { .renderView = frame.renderView, .load = LoadOp::clear } },
-	//		});
+		gpuBeginRenderPass(commands, {
+			.colors = { { .renderView = frame.renderView, .load = LoadOp::clear } },
+			});
 
-	//	bindPSO(commands, trianglePSO);
-	//	draw(commands, {}, 3);
-	//	gpuEndRenderPass(commands);
-	//	endCommands(commands);
+		bindPSO(commands, trianglePSO);
+		draw(commands, {}, 3);
+		gpuEndRenderPass(commands);
+		endCommands(commands);
 
-	//	latestCompletion.value++;
-	//	submitAndPresent(device, { .commands = { commands }, .completion = latestCompletion });
+		latestCompletion.value++;
+		submitAndPresent(device, { .commands = { commands }, .completion = latestCompletion });
 		
 		//glfwSwapBuffers(window);
-	//}
+	}
 
-	//waitIdle(device);
+	waitIdle(device);
 
-	//destroyCommandPool(commandPools[1]);
-	//destroyCommandPool(commandPools[0]);
-	//destroyTimelineSemaphore(latestCompletion.semaphore);
-	//destroyPso(trianglePSO);
+	destroyCommandPool(commandPools[1]);
+	destroyCommandPool(commandPools[0]);
+	destroyTimelineSemaphore(latestCompletion.semaphore);
+	destroyPso(trianglePSO);
 
 	destroyDevice(device);
 }

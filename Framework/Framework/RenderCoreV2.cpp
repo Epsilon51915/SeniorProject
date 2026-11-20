@@ -10,9 +10,18 @@ namespace core {
 	constexpr uint32_t maxSurfaceFormats	 = 64;
 	constexpr uint32_t maxQueueFamilies		 = 64; // So unbeleivably unlikely but sure
 	constexpr uint32_t queueTypeCount		 = 3; // The 3 queues: Graphics, Compute, Transfer.
+	constexpr uint32_t maxColorAttachments	 = 8;
 	constexpr uint32_t maxSwapchainImages	 = 3;
 	constexpr uint32_t formatCount = static_cast<uint32_t>(Format::undefined);
 	constexpr VkPresentModeKHR presentMode = VK_PRESENT_MODE_FIFO_KHR;
+
+	constexpr VkDescriptorSetAndBindingMappingEXT rootMapping{
+		.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_AND_BINDING_MAPPING_EXT,
+		.bindingCount = 1,
+		.resourceMask = VK_SPIRV_RESOURCE_TYPE_UNIFORM_BUFFER_BIT_EXT | VK_SPIRV_RESOURCE_TYPE_READ_ONLY_STORAGE_BUFFER_BIT_EXT,
+		.source = VK_DESCRIPTOR_MAPPING_SOURCE_PUSH_ADDRESS_EXT,
+		.sourceData = { .pushAddressOffset = 0 },
+	};
 
 
 #ifdef NDEBUG
@@ -248,6 +257,9 @@ namespace core {
 		uint32_t queueFamilyCount = 0;
 		uint32_t queueFamiliesIndex[queueTypeCount]{};
 
+		// Command buffer information
+		uint32_t timestampQueryCount = 0;
+
 		// Texture Information
 		uint64_t textureHeapAlignment	= 16; // 16 what? Define this.
 		uint32_t textureMemoryType		= VK_MAX_MEMORY_TYPES;
@@ -269,6 +281,7 @@ namespace core {
 		uint64_t maxTimelineValueDifference		 = 0;
 
 		// Device methods
+		void pollPresentationRetirement();
 		VkResult createPresentContext(PresentContext& context);
 		void destroyPresentContext(PresentContext& context) noexcept;
 		void pollPresentContexts() noexcept;
@@ -277,6 +290,7 @@ namespace core {
 		void queueRetiredSwapchain(RetiredSwapchain& retired) noexcept;
 		void drainContexts() noexcept;
 		void waitPresentationRetirement(uint64_t value);
+		uint64_t nextPresentationRetirement() noexcept;
 
 		~Device();
 
@@ -353,6 +367,19 @@ namespace core {
 		size_t waitSubmitCapacity = 0;
 	};
 
+	struct PSO
+	{
+		Device* currentState = nullptr;
+		VkPipeline pso = VK_NULL_HANDLE;
+
+		VkPipelineBindPoint bindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+
+		~PSO()
+		{
+			if (currentState && pso) vkDestroyPipeline(currentState->device, pso, nullptr);
+		}
+	};
+
 	// Device method defintions
 	Device::~Device()
 	{
@@ -380,6 +407,19 @@ namespace core {
 		if (instance && surface) vkDestroySurfaceKHR(instance, surface, nullptr);
 		//if (instance && debug_messenger && destroyDebugMessenger) destroy_debug_messenger(instance, debug_messenger, nullptr);
 		if (instance) vkDestroyInstance(instance, nullptr);
+	}
+
+	void Device::pollPresentationRetirement()
+	{
+		if (!presentationRetirement || completedPresentationRetirement == presentationRetirementValue)
+			return;
+		uint64_t completed = 0;
+		vkGetSemaphoreCounterValue(device, presentationRetirement, &completed);
+		//assert(completed >= completed_presentation_retirement && completed <= presentation_retirement_value);
+		if (completed == completedPresentationRetirement)
+			return;
+		completedPresentationRetirement = completed;
+		swapchainDeleteQueue.collect(device, completedPresentationRetirement);
 	}
 
 	void Device::waitPresentationRetirement(uint64_t value)
@@ -481,6 +521,20 @@ namespace core {
 		swapchainDeleteQueue.collect(device, completedPresentationRetirement);
 	}
 
+	uint64_t Device::nextPresentationRetirement() noexcept
+	{
+		const uint64_t next = presentationRetirementValue + 1;
+		if (next - completedPresentationRetirement > maxTimelineValueDifference)
+		{
+			pollPresentationRetirement();
+			if (next - completedPresentationRetirement > maxTimelineValueDifference)
+				waitPresentationRetirement(next - maxTimelineValueDifference);
+			//assert(next - completedPresentationRetirement <= maxTimelineValueDifference);
+		}
+		presentationRetirementValue = next;
+		return next;
+	}
+
 	VkFormat toVk(Format format)
 	{
 		switch (format)
@@ -537,25 +591,44 @@ namespace core {
 		return {};
 	}
 
+	VkBlendFactor toVk(BlendFactor factor)
+	{
+		switch (factor)
+		{
+		case BlendFactor::zero: return VK_BLEND_FACTOR_ZERO;
+		case BlendFactor::one: return VK_BLEND_FACTOR_ONE;
+		case BlendFactor::source_color: return VK_BLEND_FACTOR_SRC_COLOR;
+		case BlendFactor::one_minus_source_color: return VK_BLEND_FACTOR_ONE_MINUS_SRC_COLOR;
+		case BlendFactor::destination_color: return VK_BLEND_FACTOR_DST_COLOR;
+		case BlendFactor::one_minus_destination_color: return VK_BLEND_FACTOR_ONE_MINUS_DST_COLOR;
+		case BlendFactor::source_alpha: return VK_BLEND_FACTOR_SRC_ALPHA;
+		case BlendFactor::one_minus_source_alpha: return VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+		case BlendFactor::destination_alpha: return VK_BLEND_FACTOR_DST_ALPHA;
+		case BlendFactor::one_minus_destination_alpha: return VK_BLEND_FACTOR_ONE_MINUS_DST_ALPHA;
+		case BlendFactor::source_alpha_saturate: return VK_BLEND_FACTOR_SRC_ALPHA_SATURATE;
+		}
+		return VK_BLEND_FACTOR_MAX_ENUM;
+	}
+
 	VkResult Device::createPresentContext(PresentContext& context)
 	{
 		//assert(!context.acquired && !context.rendered && !context.presented && !context.swapchain && !context.present_pending);
-		const VkSemaphoreCreateInfo semaphore_info{
+		const VkSemaphoreCreateInfo semaphoreInfo{
 			.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
 		};
-		VkResult error = vkCreateSemaphore(device, &semaphore_info, nullptr, &context.acquired);
+		VkResult error = vkCreateSemaphore(device, &semaphoreInfo, nullptr, &context.acquired);
 		if (error != VK_SUCCESS)
 			return error;
-		error = vkCreateSemaphore(device, &semaphore_info, nullptr, &context.rendered);
+		error = vkCreateSemaphore(device, &semaphoreInfo, nullptr, &context.rendered);
 		if (error != VK_SUCCESS)
 		{
 			destroyPresentContext(context);
 			return error;
 		}
-		const VkFenceCreateInfo fence_info{
+		const VkFenceCreateInfo fenceInfo{
 			.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
 		};
-		error = vkCreateFence(device, &fence_info, nullptr, &context.presented);
+		error = vkCreateFence(device, &fenceInfo, nullptr, &context.presented);
 		if (error != VK_SUCCESS)
 		{
 			destroyPresentContext(context);
@@ -815,6 +888,392 @@ namespace core {
 		return VK_SUCCESS;
 	}
 
+	void setViewport(CommandBuffer* commands, const Viewport& viewport)
+	{
+		const VkViewport vkViewport{
+			.x = viewport.x,
+			.y = viewport.y,
+			.width = viewport.width,
+			.height = viewport.height,
+			.minDepth = viewport.minDepth,
+			.maxDepth = viewport.maxDepth,
+		};
+		vkCmdSetViewportWithCount(commands->commandBuffer, 1, &vkViewport);
+	}
+
+	void setScissor(CommandBuffer* commands, const Scissor& scissor)
+	{
+		const VkRect2D vkScissor{
+			.offset = { .x = scissor.x, .y = scissor.y },
+			.extent = { .width = scissor.width, .height = scissor.height },
+		};
+		vkCmdSetScissorWithCount(commands->commandBuffer, 1, &vkScissor);
+	}
+
+	void setDepthStencil(CommandBuffer* commands, const DepthStencilState& state)
+	{
+		vkCmdSetDepthTestEnable(commands->commandBuffer, state.depthTest);
+		if (state.depthTest)
+		{
+			vkCmdSetDepthWriteEnable(commands->commandBuffer, state.depthWrite);
+			vkCmdSetDepthCompareOp(commands->commandBuffer, static_cast<VkCompareOp>(state.depth_compare));
+		}
+		vkCmdSetStencilTestEnable(commands->commandBuffer, state.stencil_test);
+		if (!state.stencil_test)
+			return;
+
+		vkCmdSetStencilOp(commands->commandBuffer, VK_STENCIL_FACE_FRONT_BIT,
+			static_cast<VkStencilOp>(state.front.fail), static_cast<VkStencilOp>(state.front.pass),
+			static_cast<VkStencilOp>(state.front.depth_fail), static_cast<VkCompareOp>(state.front.compare));
+		vkCmdSetStencilOp(commands->commandBuffer, VK_STENCIL_FACE_BACK_BIT,
+			static_cast<VkStencilOp>(state.back.fail), static_cast<VkStencilOp>(state.back.pass),
+			static_cast<VkStencilOp>(state.back.depth_fail), static_cast<VkCompareOp>(state.back.compare));
+		vkCmdSetStencilCompareMask(commands->commandBuffer, VK_STENCIL_FACE_FRONT_AND_BACK, state.stencil_read_mask);
+		vkCmdSetStencilWriteMask(commands->commandBuffer, VK_STENCIL_FACE_FRONT_AND_BACK, state.stencil_write_mask);
+		vkCmdSetStencilReference(commands->commandBuffer, VK_STENCIL_FACE_FRONT_BIT, state.front.reference);
+		vkCmdSetStencilReference(commands->commandBuffer, VK_STENCIL_FACE_BACK_BIT, state.back.reference);
+	}
+
+	void gpuBeginRenderPass(CommandBuffer* buffer, const RenderingDesc& desc, RenderingFlags flags)
+	{
+		const RenderView* areaView = desc.colors.size() ? desc.colors.at(0).renderView
+			: (desc.depth.renderView ? desc.depth.renderView : desc.stencil.renderView);
+		VkRenderingAttachmentInfo colorAttatchments[maxColorAttachments];
+		for (size_t index = 0; index < desc.colors.size(); ++index)
+		{
+			const ColorAttachment& attachment = desc.colors.at(index);
+			colorAttatchments[index] = {
+				.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+				.imageView = attachment.renderView->view,
+				.imageLayout = VK_IMAGE_LAYOUT_GENERAL,
+				.loadOp = static_cast<VkAttachmentLoadOp>(attachment.load),
+				.storeOp = static_cast<VkAttachmentStoreOp>(attachment.store),
+				.clearValue = {
+					.color = {
+						.float32 = { attachment.clear.r, attachment.clear.g, attachment.clear.b, attachment.clear.a },
+					},
+				},
+			};
+		}
+
+		const VkRenderingAttachmentInfo depthAttachment{
+			.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+			.imageView = desc.depth.renderView ? desc.depth.renderView->view : VK_NULL_HANDLE,
+			.imageLayout = VK_IMAGE_LAYOUT_GENERAL,
+			.loadOp = static_cast<VkAttachmentLoadOp>(desc.depth.load),
+			.storeOp = static_cast<VkAttachmentStoreOp>(desc.depth.store),
+			.clearValue = {
+				.depthStencil = {
+					.depth = desc.depth.clear,
+				},
+			},
+		};
+		const VkRenderingAttachmentInfo stencilAttachment{
+			.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+			.imageView = desc.stencil.renderView ? desc.stencil.renderView->view : VK_NULL_HANDLE,
+			.imageLayout = VK_IMAGE_LAYOUT_GENERAL,
+			.loadOp = static_cast<VkAttachmentLoadOp>(desc.stencil.load),
+			.storeOp = static_cast<VkAttachmentStoreOp>(desc.stencil.store),
+			.clearValue = {
+				.depthStencil = {
+					.stencil = desc.stencil.clear,
+				},
+			},
+		};
+
+
+		const VkRenderingInfo renderingInfo{
+			.sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
+			.flags = static_cast<VkRenderingFlags>(flags),
+			.renderArea = {
+				.extent = { .width = areaView->width, .height = areaView->height },
+			},
+			.layerCount = 1,
+			.colorAttachmentCount = static_cast<uint32_t>(desc.colors.size()),
+			.pColorAttachments = colorAttatchments,
+			.pDepthAttachment = desc.depth.renderView ? &depthAttachment : nullptr,
+			.pStencilAttachment = desc.stencil.renderView ? &stencilAttachment : nullptr,
+		};
+
+
+
+		// Render the info sent to command buffer
+		vkCmdBeginRendering(buffer->commandBuffer, &renderingInfo);
+
+		setViewport(buffer, { .width = static_cast<float>(areaView->width), .height = static_cast<float>(areaView->height) });
+		setScissor(buffer, { .width = areaView->width, .height = areaView->height });
+		setDepthStencil(buffer, {});
+	}
+
+	void gpuEndRenderPass(CommandBuffer* buffer)
+	{
+		vkCmdEndRendering(buffer->commandBuffer);
+	}
+
+	void draw(CommandBuffer* commands, const void* root, uint32_t vertexCount, uint32_t instanceCount, uint32_t firstVertex, uint32_t firstInstance)
+	{
+		emitRootPointer(commands, root);
+		vkCmdDraw(commands->commandBuffer, vertexCount, instanceCount, firstVertex, firstInstance);
+	}
+
+	void submitCommands(Device* device, const SubmitDesc& desc, uint32_t queue_index, VkSemaphore wait_semaphore, VkSemaphore signal_semaphore)
+	{
+		Queue* queue = &device->queueArray[queue_index];
+		TimelineSemaphore* completion = desc.completion.semaphore;
+		//assert(completion);
+		//assert(desc.waits.data || desc.waits.size == 0);
+		size_t command_count = desc.commands.size();
+		for (size_t index = 0; index < desc.commands.size(); ++index)
+		{
+			//assert(desc.commands.data[index]);
+			if (desc.commands.at(index)->hasEpilogue) ++command_count;
+		}
+		if (command_count > queue->commandSubmitCapacity)
+		{
+			queue->commandSubmitCapacity = queue->commandSubmitCapacity == 0 ? 4 : queue->commandSubmitCapacity * 2;
+			if (queue->commandSubmitCapacity < command_count) queue->commandSubmitCapacity = command_count;
+			queue->commandSubmitInfos = static_cast<VkCommandBufferSubmitInfo*>(
+				realloc(queue->commandSubmitInfos, queue->commandSubmitCapacity * sizeof(VkCommandBufferSubmitInfo)));
+		}
+		for (size_t index = 0; index < desc.commands.size(); ++index)
+		{
+			CommandBuffer* commands = desc.commands.at(index);
+			//assert(commands);
+			queue->commandSubmitInfos[index] = {
+				.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO,
+				.commandBuffer = commands->commandBuffer,
+				.deviceMask = 1,
+			};
+		}
+		// Presentation transitions must follow every suspended/resumed segment.
+		size_t epilogue_index = desc.commands.size();
+		for (size_t index = 0; index < desc.commands.size(); ++index)
+		{
+			CommandBuffer* commands = desc.commands.at(index);
+			if (commands->hasEpilogue)
+			{
+				queue->commandSubmitInfos[epilogue_index++] = {
+					.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO,
+					.commandBuffer = commands->epilogue,
+					.deviceMask = 1,
+				};
+			}
+		}
+		const size_t wait_count = desc.waits.size() + (wait_semaphore ? 1 : 0);
+		if (wait_count > queue->waitSubmitCapacity)
+		{
+			queue->waitSubmitCapacity = queue->waitSubmitCapacity == 0 ? 4 : queue->waitSubmitCapacity * 2;
+			if (queue->waitSubmitCapacity < wait_count) queue->waitSubmitCapacity = wait_count;
+			queue->waitSubmitInfos = static_cast<VkSemaphoreSubmitInfo*>(
+				realloc(queue->waitSubmitInfos, queue->waitSubmitCapacity * sizeof(VkSemaphoreSubmitInfo)));
+		}
+		for (size_t index = 0; index < desc.waits.size(); ++index)
+		{
+			const TimelinePoint point = desc.waits.at(index);
+			//assert(point.semaphore);
+			queue->waitSubmitInfos[index] = {
+				.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
+				.semaphore = point.semaphore->semaphore,
+				.value = point.value,
+				.stageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+			};
+		}
+		if (wait_semaphore)
+		{
+			queue->waitSubmitInfos[desc.waits.size()] = {
+				.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
+				.semaphore = wait_semaphore,
+				.stageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+			};
+		}
+		VkSemaphoreSubmitInfo signal_infos[3]{
+			{
+				.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
+				.semaphore = completion->semaphore,
+				.value = desc.completion.value,
+				.stageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+			},
+		};
+		uint32_t signal_count = 1;
+		if (signal_semaphore)
+		{
+			signal_infos[signal_count++] = {
+				.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
+				.semaphore = signal_semaphore,
+				.stageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+			};
+			signal_infos[signal_count++] = {
+				.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
+				.semaphore = device->presentationRetirement,
+				.value = device->nextPresentationRetirement(),
+				.stageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+			};
+		}
+		const VkSubmitInfo2 submit_info{
+			.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO_2,
+			.waitSemaphoreInfoCount = static_cast<uint32_t>(wait_count),
+			.pWaitSemaphoreInfos = queue->waitSubmitInfos,
+			.commandBufferInfoCount = static_cast<uint32_t>(command_count),
+			.pCommandBufferInfos = queue->commandSubmitInfos,
+			.signalSemaphoreInfoCount = signal_count,
+			.pSignalSemaphoreInfos = signal_infos,
+		};
+		vkQueueSubmit2(queue->queue, 1, &submit_info, VK_NULL_HANDLE);
+		for (size_t index = 0; index < desc.commands.size(); ++index) desc.commands.at(index)->submitted = true;
+	}
+
+	void submitAndPresent(Device* device, const SubmitDesc& desc)
+	{
+		Swapchain* swapchain = device->swapchain;
+		PresentContext& presentContext = *swapchain->presentContext; // Swapchain not creating present contexts its created in device!?!?!
+
+		VkResult resetFenceResult = vkResetFences(device->device, 1, &presentContext.presented);
+		if (resetFenceResult != VK_SUCCESS)
+		{
+			std::cout << "Failed to reset fence. Error Code: " << resetFenceResult << std::endl;
+		}
+		submitCommands(device, desc, 0, presentContext.acquired, presentContext.rendered);
+
+		swapchain->transitionCommands->swapchain = nullptr;
+		swapchain->transitionCommands = nullptr;
+		swapchain->initialized[swapchain->imageIndex] = true;
+
+		const VkSwapchainPresentFenceInfoKHR fenceInfo{
+			.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_PRESENT_FENCE_INFO_KHR,
+			.swapchainCount = 1,
+			.pFences = &presentContext.presented,
+		};
+		const VkPresentInfoKHR presentInfo{
+			.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
+			.pNext = &fenceInfo,
+			.waitSemaphoreCount = 1,
+			.pWaitSemaphores = &presentContext.rendered,
+			.swapchainCount = 1,
+			.pSwapchains = &swapchain->handle,
+			.pImageIndices = &swapchain->imageIndex,
+		};
+		const VkResult result = vkQueuePresentKHR(device->queueArray[0].queue, &presentInfo);
+		presentContext.presentPending = true;
+		presentContext.swapchain = swapchain->handle;
+		swapchain->presentContext = nullptr;
+		swapchain->acquired = false;
+		device->acquiredSwapchain = nullptr;
+		device->nextPresentContext = (device->nextPresentContext + 1) % device->presentContextCount;
+		if (result == VK_ERROR_OUT_OF_DATE_KHR)
+			swapchain->recreateRequired = true;
+		else if (result == VK_SUBOPTIMAL_KHR)
+			swapchain->recreateRequired = swapchain->recreateRequired || swapchainSurfaceConfigurationChanged(*swapchain);
+		else if (result != VK_SUCCESS)
+			throw std::runtime_error("FAILED TO PRESENT swapchain images");
+	}
+
+	void emitRootPointer(CommandBuffer* commands, const void* root)
+	{
+		if (!root) return;
+		const VkPushDataInfoEXT info{
+			.sType = VK_STRUCTURE_TYPE_PUSH_DATA_INFO_EXT,
+			.data = { .address = &root, .size = sizeof(root) },
+		};
+		commands->state->functions.cmdPushData(commands->commandBuffer, &info);
+	}
+
+	SwapchainFrame acquire(CommandBuffer* commands)
+	{
+		Device* device = commands->state;
+		device->pollPresentationRetirement();
+
+
+		Swapchain* swapchain = device->swapchain;
+		PresentContext* present_context = nullptr;
+
+		for (;;)
+		{
+			if (!swapchain->handle || swapchain->recreateRequired)
+			{
+				VkResult error = recreateSwapchain(*swapchain);
+				if (error != VK_SUCCESS)
+				{
+					throw std::runtime_error("Failed to recreate swapchain");
+				}
+				const bool drawable = swapchain->handle && swapchain->width != 0 && swapchain->height != 0;
+				if (!drawable)
+					return {};
+			}
+
+			if (!present_context)
+			{
+				present_context = &device->presentContexts[device->nextPresentContext];
+				device->waitPresentContext(*present_context);
+				//assert(!present_context->present_pending && !present_context->swapchain);
+			}
+
+			uint32_t image_index = 0;
+			const VkResult result = vkAcquireNextImageKHR(
+				device->device,
+				swapchain->handle,
+				~uint64_t{ 0 },
+				present_context->acquired,
+				VK_NULL_HANDLE,
+				&image_index);
+			if (result == VK_ERROR_OUT_OF_DATE_KHR)
+			{
+				swapchain->recreateRequired = true;
+				continue;
+			}
+			if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR)
+				throw std::runtime_error("Acquire frame failure");
+			//assert((image_index < swapchain->image_count) && "swapchain returned an invalid image index");
+
+			swapchain->imageIndex = image_index;
+			swapchain->presentContext = present_context;
+			swapchain->acquired = true;
+			swapchain->recreateRequired = result == VK_SUBOPTIMAL_KHR && swapchainSurfaceConfigurationChanged(*swapchain);
+			device->acquiredSwapchain = swapchain;
+			const VkImageMemoryBarrier2 barrier{
+				.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+				.srcStageMask = VK_PIPELINE_STAGE_2_NONE,
+				.dstStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+				.dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT,
+				.oldLayout = swapchain->initialized[image_index] ? VK_IMAGE_LAYOUT_PRESENT_SRC_KHR : VK_IMAGE_LAYOUT_UNDEFINED,
+				.newLayout = VK_IMAGE_LAYOUT_GENERAL,
+				.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+				.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+				.image = swapchain->images[image_index],
+				.subresourceRange = {
+					.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+					.levelCount = 1,
+					.layerCount = 1,
+				},
+			};
+			recordImageBarriers(commands->commandBuffer, &barrier, 1);
+			commands->swapchain = swapchain;
+			swapchain->transitionCommands = commands;
+			return {
+				.renderView = &swapchain->renderViews[image_index],
+				.extent = { .x = swapchain->width, .y = swapchain->height },
+			};
+		}
+	}
+
+	bool swapchainSurfaceConfigurationChanged(const Swapchain& swapchain)
+	{
+		VkSurfaceCapabilitiesKHR capabilities{};
+		VkResult error = vkGetPhysicalDeviceSurfaceCapabilitiesKHR(swapchain.state->physicalDevice, swapchain.state->surface, &capabilities);
+		if (error != VK_SUCCESS)
+		{
+			return false;
+		}
+
+		const VkExtent2D extent = capabilities.currentExtent;
+		const uint32_t variable_extent = UINT_MAX;
+		return extent.width == variable_extent ||
+			extent.height == variable_extent ||
+			extent.width != swapchain.width ||
+			extent.height != swapchain.height ||
+			capabilities.currentTransform != swapchain.transform ||
+			chooseCompositeAlpha(capabilities.supportedCompositeAlpha) != swapchain.compositeAlpha;
+	}
+
 	// Format related methods
 	VkFormatFeatureFlags2 optimalFormatFeatures(VkPhysicalDevice physicalDevice, Format format)
 	{
@@ -841,7 +1300,7 @@ namespace core {
 
 		// Check for various required device extensions. Also check for the selected maintenance extension name
 		const bool unifiedImageLayoutsExtension = hasName(supportedDeviceExtensions, VK_KHR_UNIFIED_IMAGE_LAYOUTS_EXTENSION_NAME);
-		const bool addressCommandsExtension = hasName(supportedDeviceExtensions, VK_KHR_DEVICE_ADDRESS_COMMANDS_EXTENSION_NAME);
+		const bool addressCommandsExtension = hasName(supportedDeviceExtensions, VK_KHR_DEVICE_ADDRESS_COMMANDS_EXTENSION_NAME); // TODO, seemingly returning true when not supposed too
 		for (const char* name : requiredDeviceExtensions)
 		{
 			if (hasName(supportedDeviceExtensions, name))
@@ -992,7 +1451,7 @@ namespace core {
 				}
 			}
 		}
-		if (result.queueCounts[0] == 0)
+		if (result.queueCounts[0] == 0) // TODO: add other checks here
 		{
 			return VK_INCOMPLETE;
 		}
@@ -1068,6 +1527,8 @@ namespace core {
 	{
 		// TODO: This is broken somehow
 		Device* device = new Device;
+		device->timestampQueryCount = desc.timestampQueryCount;
+		device->presentContextCount = true ? desc.desiredSwapchainImageCount : 0;
 		std::vector<VkExtensionProperties> supportedInstanceExtensions;
 		std::vector<VkLayerProperties> supportedLayerProperties;
 		std::vector<const char*> enabledInstanceExtensions;
@@ -1254,13 +1715,14 @@ namespace core {
 
 		// Create the create info structs for our new queues
 		// NOTE: create info goes by families, hence why we only have 3 create infos from the total queue types
-		VkDeviceQueueCreateInfo queueCreateInfos[queueTypeCount];
+		// TODO: something wrong with queue Create info
+		VkDeviceQueueCreateInfo queueCreateInfos[queueTypeCount]{};
 		uint32_t firstQueue = 0;
 		for (uint32_t type = 0; type < queueTypeCount; ++type)
 		{
 			if (queueCountsOfTypes[type] == 0) continue;
 			device->queueFamiliesIndex[device->queueFamilyCount] = selected.queueFamilies[type];
-			queueCreateInfos[device->queueFamilyCount] =
+			queueCreateInfos[device->queueFamilyCount++] =
 			{
 				.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
 				.queueFamilyIndex = selected.queueFamilies[type],
@@ -1319,9 +1781,9 @@ namespace core {
 		{
 			throw std::runtime_error("Failure to get required device functions!");
 		}
-		if (selected.addressCommands)
+		if (selected.addressCommands == false) // NOTE: momentarily disabling addressCommands as my GPU seems to not have ANY of these features
 		{
-			device->functions.cmdBindIndexBuffer = loadDeviceProc<PFN_vkCmdBindIndexBuffer3KHR>(device->device, "vkCmdBindIndexBuffer3KHR");
+			device->functions.cmdBindIndexBuffer = loadDeviceProc<PFN_vkCmdBindIndexBuffer3KHR>(device->device, "vkCmdBindIndexBuffer3KHR"); // THIS failed?
 			device->functions.cmdDrawIndirect = loadDeviceProc<PFN_vkCmdDrawIndirect2KHR>(device->device, "vkCmdDrawIndirect2KHR");
 			device->functions.cmdDrawIndexedIndirect = loadDeviceProc<PFN_vkCmdDrawIndexedIndirect2KHR>(device->device, "vkCmdDrawIndexedIndirect2KHR");
 			device->functions.cmdDispatchIndirect = loadDeviceProc<PFN_vkCmdDispatchIndirect2KHR>(device->device, "vkCmdDispatchIndirect2KHR");
@@ -1333,7 +1795,7 @@ namespace core {
 				!device->functions.cmdDispatchIndirect || !device->functions.cmdDrawMeshTasksIndirect || !device->functions.cmdCopyMemory ||
 				!device->functions.cmdCopyMemoryToImage || !device->functions.cmdCopyImageToMemory)
 			{
-				throw std::runtime_error("Failure to get addressCommands device functions despite address commands supposdely being supported!");
+				throw std::runtime_error("Failure to get addressCommands device functions despite address commands supposedly being supported!");
 			}
 		}
 		else
@@ -1393,7 +1855,10 @@ namespace core {
 
 		// Create debug util
 
-		return DeviceInit();
+		return \
+		{
+			.newDevice = device
+		};
 	}
 	VkResult createDebugUtil()
 	{
@@ -1402,6 +1867,419 @@ namespace core {
 		return VkResult();
 	}
 
+
+	CommandPool* createCommandPool(Device* device, uint32_t queueIndex)
+	{
+		CommandPool* pool = new CommandPool{ .state = device, .timestamps = device->queueArray[queueIndex].timestamps };
+		const VkCommandPoolCreateInfo poolInfo{
+			.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+			.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT,
+			.queueFamilyIndex = device->queueArray[queueIndex].familyIndex,
+		};
+		if (vkCreateCommandPool(device->device, &poolInfo, nullptr, &pool->commandPool) != VK_SUCCESS)
+		{
+			delete pool;
+			return nullptr;
+		}
+		return pool;
+	}
+
+	void resetCommandPool(CommandPool* pool)
+	{
+		for (CommandBuffer* currBuffer = pool->first; currBuffer; currBuffer = currBuffer->next)
+		{
+			currBuffer->submitted = false;
+			currBuffer->timestampCount = 0;
+		}
+		VkResult resetResult = vkResetCommandPool(pool->state->device, pool->commandPool, 0);
+		if (resetResult != VK_SUCCESS)
+		{
+			std::cout << "Failed to reset command pool. Error code: " << resetResult << std::endl;
+		}
+		pool->nextBuffer = pool->first;
+	}
+
+	CommandBuffer* beginCommands(CommandPool* pool)
+	{
+		CommandBuffer* commands = pool->nextBuffer;
+		if (commands)
+		{
+			pool->nextBuffer = commands->next;
+		}
+		else
+		{
+			commands = new CommandBuffer{ .state = pool->state, .commandPool = pool->commandPool };
+			const VkCommandBufferAllocateInfo allocateInfo
+			{
+				.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+				.commandPool = pool->commandPool,
+				.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+				.commandBufferCount = 1,
+			};
+			VkResult allocationResult = vkAllocateCommandBuffers(pool->state->device, &allocateInfo, &commands->commandBuffer);
+			if (allocationResult != VK_SUCCESS)
+			{
+				delete commands;
+				return nullptr;
+			}
+			if (pool->timestamps)
+			{
+				const VkQueryPoolCreateInfo queryPoolInfo
+				{
+					.sType = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO,
+					.queryType = VK_QUERY_TYPE_TIMESTAMP,
+					.queryCount = pool->state->timestampQueryCount,
+				};
+				VkResult queryPoolResult = vkCreateQueryPool(pool->state->device, &queryPoolInfo, nullptr, &commands->timestampPool);
+				if (queryPoolResult != VK_SUCCESS)
+				{
+					vkFreeCommandBuffers(pool->state->device, pool->commandPool, 1, &commands->commandBuffer);
+					delete commands;
+					return nullptr;
+				}
+				commands->timestampDestinations = static_cast<uint64_t**>(malloc(sizeof(uint64_t*) * pool->state->timestampQueryCount));
+				commands->timestampResults = static_cast<uint64_t*>(malloc(sizeof(uint64_t) * pool->state->timestampQueryCount));
+			}
+			if (pool->last)
+			{
+				pool->last->next = commands;
+			}
+			else
+			{
+				pool->first = commands;
+			}
+			pool->last = commands;
+		}
+		const VkCommandBufferBeginInfo beginInfo{
+			.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+			.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
+		};
+		VkResult commandBeginResult = vkBeginCommandBuffer(commands->commandBuffer, &beginInfo);
+		if (commandBeginResult != VK_SUCCESS)
+		{
+			std::cout << "Command recording begin failed. Error code: " << commandBeginResult << std::endl;
+		}
+
+		commands->timestampCount = 0;
+		commands->submitted = false;
+		commands->hasEpilogue = false;
+
+		if (commands->timestampPool)
+			vkResetQueryPool(pool->state->device, commands->timestampPool, 0, pool->state->timestampQueryCount);
+		return commands;
+	}
+
+	void recordImageBarriers(VkCommandBuffer commandBuffer, const VkImageMemoryBarrier2* barriers, uint32_t numBarriers)
+	{
+		const VkDependencyInfo dependency{
+			.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+			.imageMemoryBarrierCount = (uint32_t) numBarriers,
+			.pImageMemoryBarriers = barriers,
+		};
+		vkCmdPipelineBarrier2(commandBuffer, &dependency);
+	}
+
+	void endCommands(CommandBuffer* commands)
+	{
+		VkCommandBuffer commandBuffer = commands->commandBuffer;
+		if (commands->swapchain)
+		{
+			VkResult endCommandResult = vkEndCommandBuffer(commandBuffer);
+			if (endCommandResult != VK_SUCCESS)
+			{
+				std::cout << "Failed to end command buffer recording. Error Code: " << endCommandResult << std::endl;
+			}
+			if (!commands->epilogue)
+			{
+				const VkCommandBufferAllocateInfo allocateInfo
+				{
+					.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+					.commandPool = commands->commandPool,
+					.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+					.commandBufferCount = 1,
+				};
+				VkResult allocateResult = vkAllocateCommandBuffers(commands->state->device, &allocateInfo, &commands->epilogue);
+				if (allocateResult != VK_SUCCESS)
+				{
+					throw std::runtime_error("FAILED TO ALLOCATE COMMAND BUFFER LINE 745");
+				}
+			}
+			const VkCommandBufferBeginInfo beginInfo
+			{
+				.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+				.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
+			};
+			commandBuffer = commands->epilogue;
+			VkResult beginRecordingResult = vkBeginCommandBuffer(commandBuffer, &beginInfo);
+			commands->hasEpilogue = true;
+			Swapchain* swapchain = commands->swapchain;
+			const VkImageMemoryBarrier2 barrier{
+				.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+				.srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+				.srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT,
+				.dstStageMask = VK_PIPELINE_STAGE_2_NONE,
+				.oldLayout = VK_IMAGE_LAYOUT_GENERAL,
+				.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+				.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+				.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+				.image = swapchain->images[swapchain->imageIndex],
+				.subresourceRange = {
+					.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+					.levelCount = 1,
+					.layerCount = 1,
+				},
+			};
+			std::vector<VkImageMemoryBarrier2> barriers;
+			barriers.push_back(barrier);
+			recordImageBarriers(commandBuffer, barriers.data(), 1);
+		}
+		VkResult endCommandRecordingResult = vkEndCommandBuffer(commandBuffer);
+		if (endCommandRecordingResult != VK_SUCCESS)
+		{
+			std::cout << "Failed to end command recording. Error code: " << endCommandRecordingResult << std::endl;
+		}
+	}
+
+	TimelineSemaphore* createTimelineSemaphore(Device* device, uint64_t initialValue)
+	{
+		const VkSemaphoreTypeCreateInfo timelineInfo{
+			.sType = VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO,
+			.semaphoreType = VK_SEMAPHORE_TYPE_TIMELINE,
+			.initialValue = initialValue,
+		};
+		const VkSemaphoreCreateInfo createInfo{
+			.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
+			.pNext = &timelineInfo,
+		};
+		TimelineSemaphore* result = new TimelineSemaphore{
+			.state = device,
+		};
+		if (vkCreateSemaphore(device->device, &createInfo, nullptr, &result->semaphore) != VK_SUCCESS)
+		{
+			delete result;
+			throw std::runtime_error("Failed to create semaphore!");
+			return nullptr;
+		}
+		return result;
+	}
+
+	void waitTimeline(TimelinePoint point)
+	{
+		TimelineSemaphore* semaphore = point.semaphore;
+		//assert((semaphore && semaphore->state && semaphore->semaphore) && "wait_timeline requires a live timeline semaphore");
+
+		const VkSemaphore handle = semaphore->semaphore;
+		const VkSemaphoreWaitInfo wait_info{
+			.sType = VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO,
+			.semaphoreCount = 1,
+			.pSemaphores = &handle,
+			.pValues = &point.value,
+		};
+		vkWaitSemaphores(
+			semaphore->state->device,
+			&wait_info,
+			~uint64_t{ 0 });
+	}
+
+	void waitIdle(Device* device)
+	{
+		vkDeviceWaitIdle(device->device);
+		device->drainContexts();
+		device->nextPresentContext = 0;
+	}
+
+	PSO* createRasterPSO(Device* device, const ShaderStage& vertStage, const ShaderStage& fragStage, std::vector<ColorTargetDesc> colorTargets, Format depthFormat, Format stencilFormat,
+		const RasterizationState& rastState, bool mesh, const ShaderStage& task = {})
+	{
+		const VkShaderModuleCreateInfo taskInfo
+		{
+			.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+			.codeSize = task.code.size(),
+			.pCode = reinterpret_cast<const uint32_t*>(task.code.data()),
+		};
+		const VkShaderModuleCreateInfo vertexInfo
+		{
+			.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+			.codeSize = vertStage.code.size(),
+			.pCode = reinterpret_cast<const uint32_t*>(vertStage.code.data()),
+		};
+		const VkShaderModuleCreateInfo fragInfo
+		{
+			.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+			.codeSize = fragStage.code.size(),
+			.pCode = reinterpret_cast<const uint32_t*>(fragStage.code.data()),
+		};
+
+		const VkShaderDescriptorSetAndBindingMappingInfoEXT mappingInfo[]
+		{
+			{ .sType = VK_STRUCTURE_TYPE_SHADER_DESCRIPTOR_SET_AND_BINDING_MAPPING_INFO_EXT, .pNext = &taskInfo,
+				.mappingCount = 1, .pMappings = &rootMapping },
+			{ .sType = VK_STRUCTURE_TYPE_SHADER_DESCRIPTOR_SET_AND_BINDING_MAPPING_INFO_EXT, .pNext = &vertexInfo,
+				.mappingCount = 1, .pMappings = &rootMapping },
+			{ .sType = VK_STRUCTURE_TYPE_SHADER_DESCRIPTOR_SET_AND_BINDING_MAPPING_INFO_EXT, .pNext = &fragInfo,
+				.mappingCount = 1, .pMappings = &rootMapping },
+		};
+		const VkPipelineShaderStageCreateInfo stages[]{
+			VkPipelineShaderStageCreateInfo{
+				.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+				.pNext = &mappingInfo[0],
+				.stage = VK_SHADER_STAGE_TASK_BIT_EXT,
+				.pName = task.entryPoint,
+			},
+			VkPipelineShaderStageCreateInfo{
+				.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+				.pNext = &mappingInfo[1],
+				.stage = mesh ? VK_SHADER_STAGE_MESH_BIT_EXT : VK_SHADER_STAGE_VERTEX_BIT,
+				.pName = vertStage.entryPoint,
+			},
+			VkPipelineShaderStageCreateInfo{
+				.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+				.pNext = &mappingInfo[2],
+				.stage = VK_SHADER_STAGE_FRAGMENT_BIT,
+				.pName = fragStage.entryPoint,
+			},
+		};
+
+		const VkPipelineVertexInputStateCreateInfo vertexInput{
+			.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
+		};
+		const VkPipelineInputAssemblyStateCreateInfo inputAssembly{
+			.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
+			.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
+		};
+		const VkPipelineViewportStateCreateInfo viewportState{
+			.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO,
+		};
+
+		// TODO: this is a lot of hardcoded values made to simplify getting the triangle on screen, change later to user-defined valuies
+		const VkPipelineRasterizationStateCreateInfo rasterization{
+			.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
+			.polygonMode = VK_POLYGON_MODE_FILL,
+			.cullMode = static_cast<VkCullModeFlags>(rastState.cull == CullMode::none ? VK_CULL_MODE_NONE : VK_CULL_MODE_BACK_BIT),
+			.frontFace = VK_FRONT_FACE_CLOCKWISE,
+			.depthBiasEnable = rastState.depthBiasConstant != 0.0f ||
+						   rastState.depthBiasClamp != 0.0f ||
+						   rastState.depthBiasSlope != 0.0f,
+			.depthBiasConstantFactor = rastState.depthBiasConstant,
+			.depthBiasClamp = rastState.depthBiasClamp,
+			.depthBiasSlopeFactor = rastState.depthBiasSlope,
+			.lineWidth = 1.0f,
+		};
+		const VkPipelineMultisampleStateCreateInfo multisample{
+			.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
+			.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT,
+		};
+		const VkPipelineDepthStencilStateCreateInfo depthStencil{
+			.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
+		};
+		VkPipelineColorBlendAttachmentState colorAttachments[maxColorAttachments]{};
+		for (size_t index = 0; index < colorTargets.size(); ++index)
+		{
+			const ColorTargetDesc& target = colorTargets.at(index);
+			colorAttachments[index] = {
+				.blendEnable = target.blend.enabled,
+				.srcColorBlendFactor = toVk(target.blend.color.source),
+				.dstColorBlendFactor = toVk(target.blend.color.destination),
+				.colorBlendOp = static_cast<VkBlendOp>(target.blend.color.operation),
+				.srcAlphaBlendFactor = toVk(target.blend.alpha.source),
+				.dstAlphaBlendFactor = toVk(target.blend.alpha.destination),
+				.alphaBlendOp = static_cast<VkBlendOp>(target.blend.alpha.operation),
+				.colorWriteMask = target.writeMask,
+			};
+		}
+
+		const VkPipelineColorBlendStateCreateInfo colorBlend{
+			.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
+			.attachmentCount = (uint32_t) colorTargets.size(),
+			.pAttachments = colorTargets.size() ? colorAttachments : nullptr,
+		};
+		constexpr VkDynamicState dynamicStates[]{
+			VK_DYNAMIC_STATE_VIEWPORT_WITH_COUNT,
+			VK_DYNAMIC_STATE_SCISSOR_WITH_COUNT,
+			VK_DYNAMIC_STATE_DEPTH_TEST_ENABLE,
+			VK_DYNAMIC_STATE_DEPTH_WRITE_ENABLE,
+			VK_DYNAMIC_STATE_DEPTH_COMPARE_OP,
+			VK_DYNAMIC_STATE_STENCIL_TEST_ENABLE,
+			VK_DYNAMIC_STATE_STENCIL_OP,
+			VK_DYNAMIC_STATE_STENCIL_COMPARE_MASK,
+			VK_DYNAMIC_STATE_STENCIL_WRITE_MASK,
+			VK_DYNAMIC_STATE_STENCIL_REFERENCE,
+		};
+		const VkPipelineDynamicStateCreateInfo dynamicState{
+			.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO,
+			.dynamicStateCount = static_cast<uint32_t>(sizeof(dynamicStates) / sizeof(dynamicStates[0])),
+			.pDynamicStates = dynamicStates,
+		};
+
+		VkFormat colorFormats[maxColorAttachments]{};
+		for (size_t index = 0; index < colorTargets.size(); ++index)
+		{
+			colorFormats[index] = toVk(colorTargets.at(index).format);
+		}
+		const VkPipelineRenderingCreateInfo renderingInfo{
+			.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO,
+			.colorAttachmentCount = (uint32_t) colorTargets.size(),
+			.pColorAttachmentFormats = colorTargets.size() ? colorFormats : nullptr,
+			.depthAttachmentFormat = toVk(depthFormat),
+			.stencilAttachmentFormat = toVk(stencilFormat),
+		};
+		const VkPipelineCreateFlags2CreateInfo flagsInfo{
+			.sType = VK_STRUCTURE_TYPE_PIPELINE_CREATE_FLAGS_2_CREATE_INFO,
+			.pNext = &renderingInfo,
+			.flags = VK_PIPELINE_CREATE_2_DESCRIPTOR_HEAP_BIT_EXT,
+		};
+		const VkGraphicsPipelineCreateInfo psoInfo{
+			.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
+			.pNext = &flagsInfo,
+			.stageCount = 1u + (task.code.size() ? 1u : 0u) + (fragStage.code.size() ? 1u : 0u),
+			.pStages = stages + (task.code.size() ? 0u : 1u),
+			.pVertexInputState = mesh ? nullptr : &vertexInput,
+			.pInputAssemblyState = mesh ? nullptr : &inputAssembly,
+			.pViewportState = &viewportState,
+			.pRasterizationState = &rasterization,
+			.pMultisampleState = &multisample,
+			.pDepthStencilState = &depthStencil,
+			.pColorBlendState = &colorBlend,
+			.pDynamicState = &dynamicState,
+			.basePipelineIndex = -1,
+		};
+		PSO* result = new PSO{
+			.currentState = device,
+			.bindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS,
+		};
+
+		if (vkCreateGraphicsPipelines(device->device, VK_NULL_HANDLE, 1, &psoInfo, nullptr, &result->pso) != VK_SUCCESS)
+		{
+			delete result;
+			return nullptr;
+		}
+
+		return result;
+	}
+
+	PSO* createGraphicsPSO(Device* device, GraphicsPSODesc graphicsDesc)
+	{
+		return createRasterPSO(device, graphicsDesc.vertex, graphicsDesc.fragment, graphicsDesc.colorTargets, graphicsDesc.depthFormat, graphicsDesc.stencilFormat, graphicsDesc.rasterization, false);
+	}
+
+	void bindPSO(CommandBuffer* commands, const PSO* pso)
+	{
+		vkCmdBindPipeline(commands->commandBuffer, pso->bindPoint, pso->pso);
+	}
+
+	std::vector<char> readShader(const char* fileName, const char* filePath)
+	{
+		std::ifstream file(fileName, std::ios::ate | std::ios::binary);
+		if (!file.is_open())
+		{
+			throw std::runtime_error("failed to open file!");
+		}
+		std::vector<char> buffer(file.tellg());
+		file.seekg(0, std::ios::beg);
+		file.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
+		file.close();
+		return buffer;
+	}
 
 	void destroyOwnedSwapchain(Device& device) noexcept
 	{
