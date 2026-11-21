@@ -3,8 +3,9 @@
 
 #pragma once
 
+#define DOCTEST_CONFIG_IMPLEMENT
 #include <iostream>
-//#include "RenderCore.hpp"
+#include <doctest/doctest.h>
 #include "Camera.h"
 #include "ECS.h"
 #include "RenderCoreV2.hpp"

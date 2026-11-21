@@ -289,7 +289,7 @@ namespace core {
 		void waitPresentContext(PresentContext& context) noexcept;
 		void queueRetiredSwapchain(RetiredSwapchain& retired) noexcept;
 		void drainContexts() noexcept;
-		void waitPresentationRetirement(uint64_t value);
+		void waitPresentationRetirement(uint64_t value) noexcept;
 		uint64_t nextPresentationRetirement() noexcept;
 
 		~Device();
@@ -422,7 +422,7 @@ namespace core {
 		swapchainDeleteQueue.collect(device, completedPresentationRetirement);
 	}
 
-	void Device::waitPresentationRetirement(uint64_t value)
+	void Device::waitPresentationRetirement(uint64_t value) noexcept
 	{
 		//assert(value <= presentation_retirement_value);
 		if (value <= completedPresentationRetirement)
@@ -436,7 +436,7 @@ namespace core {
 			.pSemaphores = &presentationRetirement,
 			.pValues = &value,
 		};
-		vkWaitSemaphores(device, &wait_info, ~uint64_t{ 0 });
+		vkWaitSemaphores(device, &wait_info, ~uint64_t{ 0 }); // THIS IS BROKEN, something wrong with semaphores?
 		completedPresentationRetirement = value;
 		swapchainDeleteQueue.collect(device, completedPresentationRetirement);
 	}
@@ -528,7 +528,7 @@ namespace core {
 		{
 			pollPresentationRetirement();
 			if (next - completedPresentationRetirement > maxTimelineValueDifference)
-				waitPresentationRetirement(next - maxTimelineValueDifference);
+				waitPresentationRetirement(next - maxTimelineValueDifference); // BREAKS HERE
 			//assert(next - completedPresentationRetirement <= maxTimelineValueDifference);
 		}
 		presentationRetirementValue = next;
@@ -1118,14 +1118,14 @@ namespace core {
 			.signalSemaphoreInfoCount = signal_count,
 			.pSignalSemaphoreInfos = signal_infos,
 		};
-		vkQueueSubmit2(queue->queue, 1, &submit_info, VK_NULL_HANDLE);
+		vkQueueSubmit2(queue->queue, 1, &submit_info, VK_NULL_HANDLE); // Doesnt reach here?
 		for (size_t index = 0; index < desc.commands.size(); ++index) desc.commands.at(index)->submitted = true;
 	}
 
 	void submitAndPresent(Device* device, const SubmitDesc& desc)
 	{
 		Swapchain* swapchain = device->swapchain;
-		PresentContext& presentContext = *swapchain->presentContext; // Swapchain not creating present contexts its created in device!?!?!
+		PresentContext& presentContext = *swapchain->presentContext;
 
 		VkResult resetFenceResult = vkResetFences(device->device, 1, &presentContext.presented);
 		if (resetFenceResult != VK_SUCCESS)
@@ -1333,8 +1333,13 @@ namespace core {
 		{
 			.physicalDevice = device,
 		};
-		vkGetPhysicalDeviceProperties2(device, &result.properties);
-		const char* deviceName = result.properties.properties.deviceName;
+		result.heapProperties.pNext = &result.vulkan12Properties;
+		VkPhysicalDeviceProperties2 properties2{
+			.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2,
+			.pNext = &result.heapProperties,
+		};
+		vkGetPhysicalDeviceProperties2(device, &properties2);
+		result.properties.properties = properties2.properties;
 		result.heapProperties.pNext = nullptr;
 		result.vulkan12Properties.pNext = nullptr;
 		vkGetPhysicalDeviceMemoryProperties2(device, &result.memoryProperties);
@@ -1525,7 +1530,6 @@ namespace core {
 
 	DeviceInit createDevice(const DesiredDevice desc)
 	{
-		// TODO: This is broken somehow
 		Device* device = new Device;
 		device->timestampQueryCount = desc.timestampQueryCount;
 		device->presentContextCount = true ? desc.desiredSwapchainImageCount : 0;
@@ -1546,7 +1550,6 @@ namespace core {
 		};
 
 		// Get extensions and layers
-		// noapi queries A LOT of extensions with larger array. Make this more efficient with vectors?
 		getInstanceExtensions(supportedInstanceExtensions);
 		getInstanceLayerProperties(supportedLayerProperties);
 
@@ -1647,7 +1650,6 @@ namespace core {
 		}
 
 		// Set device properties
-		// TODO: add format picking
 		device->physicalDevice	 = selected.physicalDevice;
 		device->deviceProperties = selected.properties;
 		device->deviceHeapProps  = selected.heapProperties;
@@ -1715,7 +1717,6 @@ namespace core {
 
 		// Create the create info structs for our new queues
 		// NOTE: create info goes by families, hence why we only have 3 create infos from the total queue types
-		// TODO: something wrong with queue Create info
 		VkDeviceQueueCreateInfo queueCreateInfos[queueTypeCount]{};
 		uint32_t firstQueue = 0;
 		for (uint32_t type = 0; type < queueTypeCount; ++type)
@@ -1732,9 +1733,6 @@ namespace core {
 			firstQueue += queueCountsOfTypes[type]; // Increase priority for each later queue?!?!? supposedly priority goes from 0.0-1.0(lowest to highest)
 		}
 
-		
-		// TODO: queueCreateInfos seems to be creating 3 queue families because of the const queueTypeCount when we only are using 1 family in this case
-		// Potentiallialy remove? It works however since default of .pNext is nullptr I believe
 		// Get device info and create device
 		VkDeviceCreateInfo deviceInfo
 		{
@@ -1855,7 +1853,7 @@ namespace core {
 
 		// Create debug util
 
-		return \
+		return
 		{
 			.newDevice = device
 		};
@@ -2119,7 +2117,8 @@ namespace core {
 			{ .sType = VK_STRUCTURE_TYPE_SHADER_DESCRIPTOR_SET_AND_BINDING_MAPPING_INFO_EXT, .pNext = &fragInfo,
 				.mappingCount = 1, .pMappings = &rootMapping },
 		};
-		const VkPipelineShaderStageCreateInfo stages[]{
+		const VkPipelineShaderStageCreateInfo stages[]
+		{
 			VkPipelineShaderStageCreateInfo{
 				.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
 				.pNext = &mappingInfo[0],
