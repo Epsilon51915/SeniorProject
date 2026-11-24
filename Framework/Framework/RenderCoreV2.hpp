@@ -14,6 +14,7 @@
 #include <vulkan/vulkan.h>
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
+#include <glm/glm.hpp>
 #include <iostream>
 #include <string>
 #include <cstdint>
@@ -101,6 +102,7 @@ namespace core
 		suspending = 2,
 		resuming = 4,
 	};
+
 	enum class LoadOp : uint8_t
 	{
 		load,
@@ -175,6 +177,7 @@ namespace core
 		uint32_t y = 0;
 		uint32_t z = 0;
 	};
+
 	struct uint32x2
 	{
 		uint32_t x = 0;
@@ -194,6 +197,29 @@ namespace core
 	struct Texture;
 
 	/// Structs to be used without pointers outside of file
+	struct Vertex
+	{
+		float x = 0.0f;
+		float y = 0.0f;
+		float z = 0.0f;
+		float w = 0.0f;
+	};
+	struct TexCoords
+	{
+		float x = 0.0f;
+		float y = 0.0f;
+	};
+	struct Cube
+	{
+		Vertex vertices;
+		TexCoords uv;
+	};
+
+	struct TextureManager
+	{
+
+	};
+
 	struct TimelineSemaphore
 	{
 		Device* state = nullptr;
@@ -389,6 +415,17 @@ namespace core
 		uint32x2 extent = {};
 	};
 
+	// Theory on this:
+	// To improve tracking of create resources related to Vulkan but NOT the ECS system, we can register a created object by pointer here
+	// Then to delete said object with delete[], we can send this struct into a function to get rid of it
+	// So then in main or wherever we want to track data, create a ResourceTracker for a type of resource like textures, then when we are done with ALL texture, delete them?
+	template <typename T>
+	struct ResourceTracker
+	{
+		size_t size;
+		T* dataStart;
+	};
+
 	/// Forward decleration of most methods to be defined in RenderCore.cpp
 	// NOTE: maintenanceExtensionName currently isn't used, TODO: add safety check maybe to swapchain maintenance check
 	VkResult inspectDevice(VkPhysicalDevice device, const DesiredDevice& desc, const char* maintenanceExtensionName, VkSurfaceKHR surface, Candidate& output);
@@ -409,10 +446,19 @@ namespace core
 	void setScissor(CommandBuffer* commands, const Scissor& scissor);
 	void setDepthStencil(CommandBuffer* commands, const DepthStencilState& state);
 
+	// Temp texture methods to be implmented in the texture class later
+	uint64_t calcTextureByteSize(uint32_t width, uint32_t height);
+
+	void matrixMult(glm::mat4& currentMatrix, glm::mat4& mult);
+
+	void bindIndices(CommandBuffer* buffer, uint32_t* indices, Vertex* vertices);
+	void bindIndices3KHR();
+
 	void gpuBeginRenderPass(CommandBuffer* buffer, const RenderingDesc& desc, RenderingFlags flags = RenderingFlags::none);
 	void gpuEndRenderPass(CommandBuffer* buffer);
 	void draw(CommandBuffer* commands, const void* root, uint32_t vertexCount, uint32_t instanceCount = 1, uint32_t firstVertex = 0,
 		uint32_t firstInstance = 0);
+	void drawIndexed(CommandBuffer* commands, const void* root, uint32_t indexCount, uint32_t instanceCount, uint32_t firstIndex, int32_t vertexOffset, uint32_t firstInstance);
 	void submitCommands(Device* device, const SubmitDesc& desc, uint32_t queue_index, VkSemaphore wait_semaphore, VkSemaphore signal_semaphore);
 	void submitAndPresent(Device* device, const SubmitDesc& desc);
 	void emitRootPointer(CommandBuffer* commands, const void* root);

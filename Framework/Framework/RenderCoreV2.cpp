@@ -4,14 +4,14 @@
 namespace core {
 
 	// Important program variables
-	constexpr uint32_t maxDeviceExtensions	 = 512;
-	constexpr uint32_t maxInstanceExtensions = 512;
+	constexpr uint32_t maxDeviceExtensions	 = 512; // Not used
+	constexpr uint32_t maxInstanceExtensions = 512; // Not used
 	constexpr uint32_t maxInstanceLayers	 = 64;
 	constexpr uint32_t maxSurfaceFormats	 = 64;
 	constexpr uint32_t maxQueueFamilies		 = 64; // So unbeleivably unlikely but sure
 	constexpr uint32_t queueTypeCount		 = 3; // The 3 queues: Graphics, Compute, Transfer.
 	constexpr uint32_t maxColorAttachments	 = 8;
-	constexpr uint32_t maxSwapchainImages	 = 3;
+	constexpr uint32_t maxSwapchainImages	 = 3; // Shouldn't be more than 3 I believe
 	constexpr uint32_t formatCount = static_cast<uint32_t>(Format::undefined);
 	constexpr VkPresentModeKHR presentMode = VK_PRESENT_MODE_FIFO_KHR;
 
@@ -934,6 +934,48 @@ namespace core {
 		vkCmdSetStencilReference(commands->commandBuffer, VK_STENCIL_FACE_BACK_BIT, state.back.reference);
 	}
 
+	void bindIndices(CommandBuffer* buffer, uint32_t* indices, Vertex* vertices)
+	{
+		// Since unfortunately VkBindIndexBuffer3KHR doesn't work on my system, we have to use traditional index buffers
+
+		// create vertex and index buffers
+		VkBuffer vertexBuffer;
+		VkBuffer indexBuffer;
+		const VkBufferCreateInfo vertBufferCreateInfo =
+		{
+			.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+			.size = sizeof(vertices), // TODO: wont work fix later
+			.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+		};
+		const VkBufferCreateInfo indexBufferCreateInfo =
+		{
+			.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+			.size = sizeof(indices), // TODO: wont work fix later
+			.usage = VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+		};
+		VkResult error;
+		error = vkCreateBuffer(buffer->state->device, &vertBufferCreateInfo, nullptr, &vertexBuffer);
+		if (error != VK_SUCCESS)
+		{
+			std::cout << "Failed to create vertex buffer!" << std::endl;
+		}
+		error = vkCreateBuffer(buffer->state->device, &indexBufferCreateInfo, nullptr, &indexBuffer);
+		if (error != VK_SUCCESS)
+		{
+			std::cout << "Failed to create index buffer!" << std::endl;
+		}
+		
+		// Bind these buffers to the command buffer
+		vkCmdBindVertexBuffers(buffer->commandBuffer, 0, 1, &vertexBuffer, 0);
+		vkCmdBindIndexBuffer(buffer->commandBuffer, indexBuffer, 0, VK_INDEX_TYPE_UINT16);
+
+		// Delete these temporary buffers
+		// NOTE: This may be wrong completely and these buffers may need to be moved to main
+		vkDestroyBuffer(buffer->state->device, vertexBuffer, nullptr);
+		vkDestroyBuffer(buffer->state->device, indexBuffer, nullptr);
+		//vkFreeMemory(buffer->state->device, vertexBuffer, nullptr);
+	}
+
 	void gpuBeginRenderPass(CommandBuffer* buffer, const RenderingDesc& desc, RenderingFlags flags)
 	{
 		const RenderView* areaView = desc.colors.size() ? desc.colors.at(0).renderView
@@ -1014,6 +1056,11 @@ namespace core {
 	{
 		emitRootPointer(commands, root);
 		vkCmdDraw(commands->commandBuffer, vertexCount, instanceCount, firstVertex, firstInstance);
+	}
+
+	void drawIndexed(CommandBuffer* commands, const void* root, uint32_t indexCount, uint32_t instanceCount, uint32_t firstIndex, int32_t vertexOffset, uint32_t firstInstance)
+	{
+		//vkCmdDrawIndexed();
 	}
 
 	void submitCommands(Device* device, const SubmitDesc& desc, uint32_t queue_index, VkSemaphore wait_semaphore, VkSemaphore signal_semaphore)
