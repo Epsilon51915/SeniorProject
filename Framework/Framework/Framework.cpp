@@ -134,7 +134,6 @@ void mainLoop()
 	graphicsPSODesc.fragment.code = fragmentShader;
 	graphicsPSODesc.fragment.entryPoint = "fragMain";
 
-	texture::loadTexture();
 
 	graphicsPSODesc.colorTargets = { { .format = Format::bgra8_srgb } };
 

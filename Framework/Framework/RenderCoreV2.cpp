@@ -1331,6 +1331,7 @@ namespace core {
 			.sType = VK_STRUCTURE_TYPE_FORMAT_PROPERTIES_2,
 			.pNext = &properties3,
 		};
+		// Crashes here on my laptop
 		vkGetPhysicalDeviceFormatProperties2(physicalDevice, toVk(format), &properties2);
 		return properties3.optimalTilingFeatures;
 	}
