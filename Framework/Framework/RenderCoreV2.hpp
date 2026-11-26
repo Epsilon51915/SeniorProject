@@ -428,8 +428,9 @@ namespace core
 
 	/// Forward decleration of most methods to be defined in RenderCore.cpp
 	// NOTE: maintenanceExtensionName currently isn't used, TODO: add safety check maybe to swapchain maintenance check
-	VkResult inspectDevice(VkPhysicalDevice device, const DesiredDevice& desc, const char* maintenanceExtensionName, VkSurfaceKHR surface, Candidate& output);
+	VkResult inspectDevice(VkPhysicalDevice device, const DesiredDevice& desc, const char* maintenanceExtensionName, VkSurfaceKHR surface, Candidate& output, bool& bareMinFeatures);
 	bool hasName(const std::vector<VkExtensionProperties>& extensionArr, const char* nameCheck);
+	bool hasName(const std::vector<const char*>& extensionArr, const char* nameCheck);
 	VkResult getInstanceExtensions(std::vector<VkExtensionProperties>& extensions);
 	VkResult getDeviceInstanceExtensions(std::vector<VkExtensionProperties>& extensions, VkPhysicalDevice device);
 	VkResult getInstanceLayerProperties(std::vector<VkLayerProperties>& extensions);

@@ -45,6 +45,10 @@ namespace core {
 		VK_EXT_MESH_SHADER_EXTENSION_NAME,
 		VK_KHR_SWAPCHAIN_EXTENSION_NAME,
 	};
+	constexpr const char* bareMinimumRequiredDeviceExtensions[]
+	{
+		VK_KHR_SWAPCHAIN_EXTENSION_NAME
+	};
 
 
 	struct DeviceFunctions
@@ -251,6 +255,8 @@ namespace core {
 		VkPhysicalDeviceProperties2 deviceProperties{.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2 };
 		VkPhysicalDeviceMemoryProperties2 deviceMemProps{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2 };
 		VkPhysicalDeviceDescriptorHeapPropertiesEXT deviceHeapProps{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_HEAP_PROPERTIES_EXT };
+		bool foundSwapMaintenance = false;
+		bool bareMinMode		  = false; // if device lacks most features for noapi, toggle this
 
 		// Queue Family Information
 		uint32_t totalQueueCount = 0;
@@ -265,6 +271,7 @@ namespace core {
 		uint32_t textureMemoryType		= VK_MAX_MEMORY_TYPES;
 		bool textureCompressionEtc2		= false;
 		bool swapchainColorSpaceEnabled = false;
+
 
 		// Swapchain/Present Information
 		SwapchainDeleteQueue swapchainDeleteQueue;
@@ -1337,8 +1344,9 @@ namespace core {
 	}
 
 	// Checks if device we are inspecting has required features
-	VkResult inspectDevice(VkPhysicalDevice device, const DesiredDevice& desc, const char* maintenanceExtensionName, VkSurfaceKHR surface, Candidate& output)
+	VkResult inspectDevice(VkPhysicalDevice device, const DesiredDevice& desc, const char* maintenanceExtensionName, VkSurfaceKHR surface, Candidate& output, bool& bareMinFeatures)
 	{
+		bareMinFeatures = false;
 		std::vector<VkExtensionProperties> supportedDeviceExtensions;
 		std::vector<const char*> enabledDeviceExtensions;
 		if (getDeviceInstanceExtensions(supportedDeviceExtensions, device) != VK_SUCCESS)
@@ -1358,6 +1366,12 @@ namespace core {
 		}
 		if (enabledDeviceExtensions.size() < sizeof(requiredDeviceExtensions) / sizeof(requiredDeviceExtensions[0]))
 		{
+			std::cout << "Not all required extensions were found, verifying we have swapchain support and continuing in bare features mode" << std::endl;
+			bareMinFeatures = true;
+		}
+		const bool hasSwapsupport = hasName(enabledDeviceExtensions, VK_KHR_SWAPCHAIN_EXTENSION_NAME);
+		if (!hasSwapsupport)
+		{
 			return VK_INCOMPLETE;
 		}
 		// Find which swapchain maintence we are using.
@@ -1373,7 +1387,8 @@ namespace core {
 		}
 		else
 		{
-			return VK_INCOMPLETE;
+			std::cout << "No swap maintenance found, continuing without" << std::endl;
+			bareMinFeatures = true;
 		}
 
 		// Get properties, including heap and memory properties
@@ -1426,8 +1441,38 @@ namespace core {
 			(features.swapchainMaintenance1.swapchainMaintenance1 == VK_TRUE); // noapi shecks for either if a surface is null. But we are always going to be presenting so we dont need that check
 		if (!requiredFeatures)
 		{
+			std::cout << "Required features for better functionaliy not found! Checking for bare min mode" << std::endl;
+			bareMinFeatures = true;
+		}
+		// If no required features, check for this bare min
+		// These are based on my laptop
+		const bool bareMinFeaturesCheck = !requiredFeatures &&
+			features.core.features.shaderInt16 == VK_TRUE &&
+			features.core.features.samplerAnisotropy == VK_TRUE &&
+			features.core.features.depthBiasClamp == VK_TRUE &&
+			features.core.features.independentBlend == VK_TRUE &&
+			features.core.features.fragmentStoresAndAtomics == VK_TRUE &&
+			features.core.features.vertexPipelineStoresAndAtomics == VK_TRUE &&
+			features.core.features.shaderStorageImageWriteWithoutFormat == VK_TRUE &&
+			features.core.features.multiDrawIndirect == VK_TRUE &&
+			features.core.features.drawIndirectFirstInstance == VK_TRUE &&
+			features.vulkan11.storageBuffer16BitAccess == VK_TRUE &&
+			features.vulkan11.storagePushConstant16 == VK_TRUE &&
+			features.vulkan11.shaderDrawParameters == VK_TRUE &&
+			features.vulkan12.shaderFloat16 == VK_TRUE &&
+			features.vulkan12.scalarBlockLayout == VK_TRUE &&
+			features.vulkan12.bufferDeviceAddress == VK_TRUE &&
+			features.vulkan12.timelineSemaphore == VK_TRUE &&
+			features.vulkan13.synchronization2 == VK_TRUE &&
+			features.vulkan13.dynamicRendering == VK_TRUE &&
+			features.vulkan13.maintenance4 == VK_TRUE &&
+			features.vulkan14.maintenance5 == VK_TRUE;
+		if (!bareMinFeaturesCheck)
+		{
 			return VK_INCOMPLETE;
 		}
+
+
 		// Optional check to see if we have these features
 		result.imageCubeArray =			features.core.features.imageCubeArray == VK_TRUE;
 		result.textureCompressionBc =	features.core.features.textureCompressionBC == VK_TRUE;
@@ -1624,8 +1669,10 @@ namespace core {
 		}
 		if (!surfaceMaintenanceFound)
 		{
-			throw std::runtime_error("Surface Maintenance Extension not found! May not be supported on device");
+			std::cout << "No surface maintenance found, program will run without it!" << std::endl;
 		}
+
+		device->foundSwapMaintenance = surfaceMaintenanceFound;
 		// NOTE: always use pointers or references when using vectors as if you dont it will self-modify its values and mess up your result
 		uint32_t addedExtensions = 0;
 		for (const char* name : requiredInstanceExtensions)
@@ -1640,7 +1687,7 @@ namespace core {
 				}
 			}
 		}
-		if (addedExtensions < sizeof(requiredInstanceExtensions) / sizeof(requiredInstanceExtensions[0]))// TODO: remove this hardcoded value later by turning required extensions into a vector
+		if (addedExtensions < sizeof(requiredInstanceExtensions) / sizeof(requiredInstanceExtensions[0]))
 		{
 			throw std::runtime_error("Failed to get all required extensions, check debugger for what is mising.");
 		}
@@ -1680,6 +1727,7 @@ namespace core {
 		}
 
 		// Get available physical devices, its features and properties, and queue information
+		// TODO: add stronger check here so that when inspect device scans a weaker GPU, it doesn't ignore potentially better ones
 		uint32_t deviceCount = 0;
 		std::vector<VkPhysicalDevice> physicalDeviceList;
 		VkPhysicalDevice chosenDevice = VK_NULL_HANDLE;
@@ -1690,10 +1738,14 @@ namespace core {
 		for (const VkPhysicalDevice& physicalDevice : physicalDeviceList)
 		{
 			Candidate candidate{};
-			if (inspectDevice(physicalDevice, desc, foundMaintenanceName, device->surface, candidate) == VK_SUCCESS)
+			if (inspectDevice(physicalDevice, desc, foundMaintenanceName, device->surface, candidate, device->bareMinMode) == VK_SUCCESS)
 			{
 				selected = candidate;
-				break;
+				// If we are not in bare min mode, we can most likely safely end inspecting devices, otehrwise continue loop
+				if (!device->bareMinMode)
+				{
+					break;
+				}
 			}
 		}
 
@@ -1711,43 +1763,77 @@ namespace core {
 				device->physicalDevice, static_cast<Format>(value));
 		}
 
-
+		// TODO: Add a loop to enable the found features
+		// TODO: bareMinMode returing FALSE when it needs to be TRUE
 		DesiredFeatures enabledFeatures(true, selected.unifiedImageLayouts, selected.addressCommands);
-		device->textureCompressionEtc2 = selected.textureCompressionEtc2;
-		enabledFeatures.core.features.imageCubeArray = selected.imageCubeArray;
-		enabledFeatures.core.features.samplerAnisotropy = VK_TRUE;
-		enabledFeatures.core.features.shaderInt16 = VK_TRUE;
-		enabledFeatures.core.features.depthBiasClamp = VK_TRUE;
-		enabledFeatures.core.features.independentBlend = VK_TRUE;
-		enabledFeatures.core.features.textureCompressionBC = selected.textureCompressionBc;
-		enabledFeatures.core.features.textureCompressionASTC_LDR = selected.textureCompressionAstc;
-		enabledFeatures.core.features.textureCompressionETC2 = selected.textureCompressionEtc2;
-		enabledFeatures.core.features.fragmentStoresAndAtomics = VK_TRUE;
-		enabledFeatures.core.features.vertexPipelineStoresAndAtomics = VK_TRUE;
-		enabledFeatures.core.features.shaderStorageImageReadWithoutFormat = VK_TRUE;
-		enabledFeatures.core.features.shaderStorageImageWriteWithoutFormat = VK_TRUE;
-		enabledFeatures.core.features.multiDrawIndirect = VK_TRUE;
-		enabledFeatures.core.features.drawIndirectFirstInstance = VK_TRUE;
-		enabledFeatures.vulkan11.storageBuffer16BitAccess = VK_TRUE;
-		enabledFeatures.vulkan11.storagePushConstant16 = VK_TRUE;
-		enabledFeatures.vulkan11.storageInputOutput16 = selected.storageInputOutput16;
-		enabledFeatures.vulkan11.shaderDrawParameters = VK_TRUE;
-		enabledFeatures.vulkan12.shaderFloat16 = VK_TRUE;
-		enabledFeatures.vulkan12.scalarBlockLayout = VK_TRUE;
-		enabledFeatures.vulkan12.timelineSemaphore = VK_TRUE;
-		enabledFeatures.vulkan12.hostQueryReset = selected.timestamps[0] || selected.timestamps[1] || selected.timestamps[2];
-		enabledFeatures.vulkan12.bufferDeviceAddress = VK_TRUE;
-		enabledFeatures.vulkan13.synchronization2 = VK_TRUE;
-		enabledFeatures.vulkan13.dynamicRendering = VK_TRUE;
-		enabledFeatures.vulkan13.maintenance4 = VK_TRUE;
-		enabledFeatures.vulkan14.maintenance5 = VK_TRUE;
-		enabledFeatures.descriptorHeap.descriptorHeap = VK_TRUE;
-		enabledFeatures.addressCommands.deviceAddressCommands = selected.addressCommands;
-		enabledFeatures.untypedPointers.shaderUntypedPointers = VK_TRUE;
-		enabledFeatures.unifiedImageLayouts.unifiedImageLayouts = selected.unifiedImageLayouts ? VK_TRUE : VK_FALSE;
-		enabledFeatures.meshShader.taskShader = VK_TRUE;
-		enabledFeatures.meshShader.meshShader = VK_TRUE;
-		enabledFeatures.swapchainMaintenance1.swapchainMaintenance1 = VK_TRUE;
+		if (!device->bareMinMode) {
+			device->textureCompressionEtc2 = selected.textureCompressionEtc2;
+			enabledFeatures.core.features.imageCubeArray = selected.imageCubeArray;
+			enabledFeatures.core.features.samplerAnisotropy = VK_TRUE;
+			enabledFeatures.core.features.shaderInt16 = VK_TRUE;
+			enabledFeatures.core.features.depthBiasClamp = VK_TRUE;
+			enabledFeatures.core.features.independentBlend = VK_TRUE;
+			enabledFeatures.core.features.textureCompressionBC = selected.textureCompressionBc;
+			enabledFeatures.core.features.textureCompressionASTC_LDR = selected.textureCompressionAstc;
+			enabledFeatures.core.features.textureCompressionETC2 = selected.textureCompressionEtc2;
+			enabledFeatures.core.features.fragmentStoresAndAtomics = VK_TRUE;
+			enabledFeatures.core.features.vertexPipelineStoresAndAtomics = VK_TRUE;
+			enabledFeatures.core.features.shaderStorageImageReadWithoutFormat = VK_TRUE;
+			enabledFeatures.core.features.shaderStorageImageWriteWithoutFormat = VK_TRUE;
+			enabledFeatures.core.features.multiDrawIndirect = VK_TRUE;
+			enabledFeatures.core.features.drawIndirectFirstInstance = VK_TRUE;
+			enabledFeatures.vulkan11.storageBuffer16BitAccess = VK_TRUE;
+			enabledFeatures.vulkan11.storagePushConstant16 = VK_TRUE;
+			enabledFeatures.vulkan11.storageInputOutput16 = selected.storageInputOutput16;
+			enabledFeatures.vulkan11.shaderDrawParameters = VK_TRUE;
+			enabledFeatures.vulkan12.shaderFloat16 = VK_TRUE;
+			enabledFeatures.vulkan12.scalarBlockLayout = VK_TRUE;
+			enabledFeatures.vulkan12.timelineSemaphore = VK_TRUE;
+			enabledFeatures.vulkan12.hostQueryReset = selected.timestamps[0] || selected.timestamps[1] || selected.timestamps[2];
+			enabledFeatures.vulkan12.bufferDeviceAddress = VK_TRUE;
+			enabledFeatures.vulkan13.synchronization2 = VK_TRUE;
+			enabledFeatures.vulkan13.dynamicRendering = VK_TRUE;
+			enabledFeatures.vulkan13.maintenance4 = VK_TRUE;
+			enabledFeatures.vulkan14.maintenance5 = VK_TRUE;
+		}
+		else
+		{
+			device->textureCompressionEtc2 = selected.textureCompressionEtc2;
+			enabledFeatures.core.features.imageCubeArray = selected.imageCubeArray;
+			enabledFeatures.core.features.samplerAnisotropy = VK_TRUE;
+			enabledFeatures.core.features.shaderInt16 = VK_TRUE;
+			enabledFeatures.core.features.depthBiasClamp = VK_TRUE;
+			enabledFeatures.core.features.independentBlend = VK_TRUE;
+			enabledFeatures.core.features.textureCompressionBC = selected.textureCompressionBc;
+			enabledFeatures.core.features.textureCompressionASTC_LDR = selected.textureCompressionAstc;
+			enabledFeatures.core.features.textureCompressionETC2 = selected.textureCompressionEtc2;
+			enabledFeatures.core.features.fragmentStoresAndAtomics = VK_TRUE;
+			enabledFeatures.core.features.vertexPipelineStoresAndAtomics = VK_TRUE;
+			enabledFeatures.core.features.shaderStorageImageReadWithoutFormat = VK_FALSE;
+			enabledFeatures.core.features.shaderStorageImageWriteWithoutFormat = VK_TRUE;
+			enabledFeatures.core.features.multiDrawIndirect = VK_TRUE;
+			enabledFeatures.core.features.drawIndirectFirstInstance = VK_TRUE;
+			enabledFeatures.vulkan11.storageBuffer16BitAccess = VK_TRUE;
+			enabledFeatures.vulkan11.storagePushConstant16 = VK_TRUE;
+			enabledFeatures.vulkan11.storageInputOutput16 = VK_TRUE;
+			enabledFeatures.vulkan11.shaderDrawParameters = VK_TRUE;
+			enabledFeatures.vulkan12.shaderFloat16 = VK_TRUE;
+			enabledFeatures.vulkan12.scalarBlockLayout = VK_TRUE;
+			enabledFeatures.vulkan12.timelineSemaphore = VK_TRUE;
+			enabledFeatures.vulkan12.hostQueryReset = selected.timestamps[0] || selected.timestamps[1] || selected.timestamps[2];
+			enabledFeatures.vulkan12.bufferDeviceAddress = VK_TRUE;
+			enabledFeatures.vulkan13.synchronization2 = VK_TRUE;
+			enabledFeatures.vulkan13.dynamicRendering = VK_TRUE;
+			enabledFeatures.vulkan13.maintenance4 = VK_TRUE;
+			enabledFeatures.vulkan14.maintenance5 = VK_TRUE;
+			//enabledFeatures.descriptorHeap.descriptorHeap = VK_TRUE;
+			//enabledFeatures.addressCommands.deviceAddressCommands = selected.addressCommands;
+			//enabledFeatures.untypedPointers.shaderUntypedPointers = VK_TRUE;
+			//enabledFeatures.unifiedImageLayouts.unifiedImageLayouts = selected.unifiedImageLayouts ? VK_TRUE : VK_FALSE;
+			//enabledFeatures.meshShader.taskShader = VK_TRUE;
+			//enabledFeatures.meshShader.meshShader = VK_TRUE;
+			//enabledFeatures.swapchainMaintenance1.swapchainMaintenance1 = VK_TRUE;
+		}
 
 		// Get queue information from each assigned family
 		const uint32_t requestedQueueCounts[]{ desc.desiredGraphicsQueues, desc.desiredComputeQueues, desc.desiredTransferQueues };
@@ -1815,41 +1901,43 @@ namespace core {
 		//	return fail_device_creation(state, Error::unsupported);
 
 		// Fill in device functions
-		device->functions.writeSamplerDescriptors = loadDeviceProc<PFN_vkWriteSamplerDescriptorsEXT>(device->device, "vkWriteSamplerDescriptorsEXT");
-		device->functions.writeResourceDescriptors = loadDeviceProc<PFN_vkWriteResourceDescriptorsEXT>(device->device, "vkWriteResourceDescriptorsEXT");
-		device->functions.cmdBindSamplerHeap = loadDeviceProc<PFN_vkCmdBindSamplerHeapEXT>(device->device, "vkCmdBindSamplerHeapEXT");
-		device->functions.cmdBindTextureHeap = loadDeviceProc<PFN_vkCmdBindResourceHeapEXT>(device->device, "vkCmdBindResourceHeapEXT");
-		device->functions.cmdPushData = loadDeviceProc<PFN_vkCmdPushDataEXT>(device->device, "vkCmdPushDataEXT");
-		device->functions.cmdDrawMeshTasks = loadDeviceProc<PFN_vkCmdDrawMeshTasksEXT>(device->device, "vkCmdDrawMeshTasksEXT");
-		if (!device->functions.writeSamplerDescriptors || !device->functions.writeResourceDescriptors ||
-			!device->functions.cmdBindSamplerHeap || !device->functions.cmdBindTextureHeap ||
-			!device->functions.cmdPushData || !device->functions.cmdDrawMeshTasks)
-		{
-			throw std::runtime_error("Failure to get required device functions!");
-		}
-		if (selected.addressCommands == false) // NOTE: momentarily disabling addressCommands as my GPU seems to not have ANY of these features
-		{
-			device->functions.cmdBindIndexBuffer = loadDeviceProc<PFN_vkCmdBindIndexBuffer3KHR>(device->device, "vkCmdBindIndexBuffer3KHR"); // THIS failed?
-			device->functions.cmdDrawIndirect = loadDeviceProc<PFN_vkCmdDrawIndirect2KHR>(device->device, "vkCmdDrawIndirect2KHR");
-			device->functions.cmdDrawIndexedIndirect = loadDeviceProc<PFN_vkCmdDrawIndexedIndirect2KHR>(device->device, "vkCmdDrawIndexedIndirect2KHR");
-			device->functions.cmdDispatchIndirect = loadDeviceProc<PFN_vkCmdDispatchIndirect2KHR>(device->device, "vkCmdDispatchIndirect2KHR");
-			device->functions.cmdDrawMeshTasksIndirect = loadDeviceProc<PFN_vkCmdDrawMeshTasksIndirect2EXT>(device->device, "vkCmdDrawMeshTasksIndirect2EXT");
-			device->functions.cmdCopyMemory = loadDeviceProc<PFN_vkCmdCopyMemoryKHR>(device->device, "vkCmdCopyMemoryKHR");
-			device->functions.cmdCopyMemoryToImage = loadDeviceProc<PFN_vkCmdCopyMemoryToImageKHR>(device->device, "vkCmdCopyMemoryToImageKHR");
-			device->functions.cmdCopyImageToMemory = loadDeviceProc<PFN_vkCmdCopyImageToMemoryKHR>(device->device, "vkCmdCopyImageToMemoryKHR");
-			if (!device->functions.cmdBindIndexBuffer || !device->functions.cmdDrawIndirect || !device->functions.cmdDrawIndexedIndirect ||
-				!device->functions.cmdDispatchIndirect || !device->functions.cmdDrawMeshTasksIndirect || !device->functions.cmdCopyMemory ||
-				!device->functions.cmdCopyMemoryToImage || !device->functions.cmdCopyImageToMemory)
+		if (!device->bareMinMode) {
+			device->functions.writeSamplerDescriptors = loadDeviceProc<PFN_vkWriteSamplerDescriptorsEXT>(device->device, "vkWriteSamplerDescriptorsEXT");
+			device->functions.writeResourceDescriptors = loadDeviceProc<PFN_vkWriteResourceDescriptorsEXT>(device->device, "vkWriteResourceDescriptorsEXT");
+			device->functions.cmdBindSamplerHeap = loadDeviceProc<PFN_vkCmdBindSamplerHeapEXT>(device->device, "vkCmdBindSamplerHeapEXT");
+			device->functions.cmdBindTextureHeap = loadDeviceProc<PFN_vkCmdBindResourceHeapEXT>(device->device, "vkCmdBindResourceHeapEXT");
+			device->functions.cmdPushData = loadDeviceProc<PFN_vkCmdPushDataEXT>(device->device, "vkCmdPushDataEXT");
+			device->functions.cmdDrawMeshTasks = loadDeviceProc<PFN_vkCmdDrawMeshTasksEXT>(device->device, "vkCmdDrawMeshTasksEXT");
+			if (!device->functions.writeSamplerDescriptors || !device->functions.writeResourceDescriptors ||
+				!device->functions.cmdBindSamplerHeap || !device->functions.cmdBindTextureHeap ||
+				!device->functions.cmdPushData || !device->functions.cmdDrawMeshTasks)
 			{
-				throw std::runtime_error("Failure to get addressCommands device functions despite address commands supposedly being supported!");
+				throw std::runtime_error("Failure to get required device functions!");
 			}
-		}
-		else
-		{
-			device->functions.cmdDrawMeshTasksIndirectBuffer = loadDeviceProc<PFN_vkCmdDrawMeshTasksIndirectEXT>(device->device, "vkCmdDrawMeshTasksIndirectEXT");
-			if (!device->functions.cmdDrawMeshTasksIndirectBuffer)
-				throw std::runtime_error("Failure to get addressCommands device functions despite address commands supposdely being supported!");
-			//device->bufferMap = new detail::BufferAddressMap{}; TODO: Get bufferMap variable
+			if (selected.addressCommands == false) // NOTE: momentarily disabling addressCommands as my GPU seems to not have ANY of these features
+			{
+				device->functions.cmdBindIndexBuffer = loadDeviceProc<PFN_vkCmdBindIndexBuffer3KHR>(device->device, "vkCmdBindIndexBuffer3KHR"); // THIS failed?
+				device->functions.cmdDrawIndirect = loadDeviceProc<PFN_vkCmdDrawIndirect2KHR>(device->device, "vkCmdDrawIndirect2KHR");
+				device->functions.cmdDrawIndexedIndirect = loadDeviceProc<PFN_vkCmdDrawIndexedIndirect2KHR>(device->device, "vkCmdDrawIndexedIndirect2KHR");
+				device->functions.cmdDispatchIndirect = loadDeviceProc<PFN_vkCmdDispatchIndirect2KHR>(device->device, "vkCmdDispatchIndirect2KHR");
+				device->functions.cmdDrawMeshTasksIndirect = loadDeviceProc<PFN_vkCmdDrawMeshTasksIndirect2EXT>(device->device, "vkCmdDrawMeshTasksIndirect2EXT");
+				device->functions.cmdCopyMemory = loadDeviceProc<PFN_vkCmdCopyMemoryKHR>(device->device, "vkCmdCopyMemoryKHR");
+				device->functions.cmdCopyMemoryToImage = loadDeviceProc<PFN_vkCmdCopyMemoryToImageKHR>(device->device, "vkCmdCopyMemoryToImageKHR");
+				device->functions.cmdCopyImageToMemory = loadDeviceProc<PFN_vkCmdCopyImageToMemoryKHR>(device->device, "vkCmdCopyImageToMemoryKHR");
+				if (!device->functions.cmdBindIndexBuffer || !device->functions.cmdDrawIndirect || !device->functions.cmdDrawIndexedIndirect ||
+					!device->functions.cmdDispatchIndirect || !device->functions.cmdDrawMeshTasksIndirect || !device->functions.cmdCopyMemory ||
+					!device->functions.cmdCopyMemoryToImage || !device->functions.cmdCopyImageToMemory)
+				{
+					throw std::runtime_error("Failure to get addressCommands device functions despite address commands supposedly being supported!");
+				}
+			}
+			else
+			{
+				device->functions.cmdDrawMeshTasksIndirectBuffer = loadDeviceProc<PFN_vkCmdDrawMeshTasksIndirectEXT>(device->device, "vkCmdDrawMeshTasksIndirectEXT");
+				if (!device->functions.cmdDrawMeshTasksIndirectBuffer)
+					throw std::runtime_error("Failure to get addressCommands device functions despite address commands supposdely being supported!");
+				//device->bufferMap = new detail::BufferAddressMap{}; TODO: Get bufferMap variable
+			}
 		}
 
 		const VkSemaphoreTypeCreateInfo typeInfo{
@@ -1906,6 +1994,7 @@ namespace core {
 			.newDevice = device
 		};
 	}
+
 	VkResult createDebugUtil()
 	{
 		VkDebugUtilsMessengerCreateInfoEXT debugUitlInfo;
