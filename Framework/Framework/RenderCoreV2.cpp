@@ -506,11 +506,17 @@ namespace core {
 		context = {};
 	}
 
+	/*
+	*	When Present is pending my laptop freezes.
+	*/
 	void Device::waitPresentContext(PresentContext& context) noexcept
 	{
 		if (!context.presentPending)
 			return;
-		vkWaitForFences(device, 1, &context.presented, VK_TRUE, ~uint64_t{ 0 });
+		//if (vkWaitForFences(device, 1, &context.presented, VK_TRUE, ~uint64_t{ 0 }) != VK_SUCCESS)
+		//{
+		//	return;
+		//}
 		context.presentPending = false;
 		finishPresentContext(context);
 	}
@@ -804,7 +810,7 @@ namespace core {
 		};
 		const VkSwapchainCreateInfoKHR createInfo{
 			.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
-			.pNext = &presentModesInfo,
+			.pNext = device.bareMinMode ? nullptr : &presentModesInfo,
 			.surface = device.surface,
 			.minImageCount = requestedImageCount,
 			.imageFormat = requestedFormat,
@@ -1199,7 +1205,7 @@ namespace core {
 		};
 		const VkPresentInfoKHR presentInfo{
 			.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
-			.pNext = &fenceInfo,
+			.pNext = device->bareMinMode ? nullptr : &fenceInfo,
 			.waitSemaphoreCount = 1,
 			.pWaitSemaphores = &presentContext.rendered,
 			.swapchainCount = 1,
@@ -1257,10 +1263,11 @@ namespace core {
 			if (!present_context)
 			{
 				present_context = &device->presentContexts[device->nextPresentContext];
-				device->waitPresentContext(*present_context);
+				device->waitPresentContext(*present_context); // breaks on laptop
 				//assert(!present_context->present_pending && !present_context->swapchain);
 			}
 
+			// TODO: Something is also wrong here
 			uint32_t image_index = 0;
 			const VkResult result = vkAcquireNextImageKHR(
 				device->device,
@@ -2244,7 +2251,6 @@ namespace core {
 			.codeSize = fragStage.code.size(),
 			.pCode = reinterpret_cast<const uint32_t*>(fragStage.code.data()),
 		};
-
 		const VkShaderDescriptorSetAndBindingMappingInfoEXT mappingInfo[]
 		{
 			{ .sType = VK_STRUCTURE_TYPE_SHADER_DESCRIPTOR_SET_AND_BINDING_MAPPING_INFO_EXT, .pNext = &taskInfo,
@@ -2287,7 +2293,7 @@ namespace core {
 			.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO,
 		};
 
-		// TODO: this is a lot of hardcoded values made to simplify getting the triangle on screen, change later to user-defined valuies
+		
 		const VkPipelineRasterizationStateCreateInfo rasterization{
 			.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
 			.polygonMode = VK_POLYGON_MODE_FILL,
@@ -2393,9 +2399,219 @@ namespace core {
 		return result;
 	}
 
+	/*
+	*	When in Bare min mode, will create a less flexible PSO that lacks cooler features
+	*/
+	VkShaderModule createShaderModule(Device* device, const std::vector<char>& code)
+	{
+		VkShaderModuleCreateInfo createInfo
+		{
+			.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+			.codeSize = code.size(),
+			.pCode = reinterpret_cast<const uint32_t*>(code.data())
+		};
+		VkShaderModule module;
+		if (vkCreateShaderModule(device->device, &createInfo, nullptr, &module) != VK_SUCCESS)
+		{
+			std::cout << "Failed to create Shader module" << std::endl;
+		}
+		return module;
+	}
+	PSO* createRasterBareMin(Device* device, const ShaderStage& vertStage, const ShaderStage& fragStage, std::vector<ColorTargetDesc> colorTargets, Format depthFormat, Format stencilFormat,
+		const RasterizationState& rastState, bool mesh, const ShaderStage& task = {})
+	{
+		const VkShaderModuleCreateInfo taskInfo
+		{
+			.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+			.codeSize = task.code.size(),
+			.pCode = reinterpret_cast<const uint32_t*>(task.code.data()),
+		};
+		const VkShaderModuleCreateInfo vertexInfo
+		{
+			.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+			.codeSize = vertStage.code.size(),
+			.pCode = reinterpret_cast<const uint32_t*>(vertStage.code.data()),
+		};
+		const VkShaderModuleCreateInfo fragInfo
+		{
+			.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+			.codeSize = fragStage.code.size(),
+			.pCode = reinterpret_cast<const uint32_t*>(fragStage.code.data()),
+		};
+		
+		// Create Shader modules since we do not have mappings
+		VkShaderModule vertModule = createShaderModule(device, vertStage.code);
+		VkShaderModule fragModule = createShaderModule(device, fragStage.code);;
+
+		// NOTE: Cannot create mapping infos as max mapping count is 0 with VK_descriptor_heap is not enabled
+		// TODO: need replacement for .pNext = mappingInfo[]
+		const VkPipelineShaderStageCreateInfo stages[]
+		{
+			//VkPipelineShaderStageCreateInfo{
+			//	.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+			//	.pNext = nullptr,
+			//	.stage = VK_SHADER_STAGE_TASK_BIT_EXT,
+			//	.pName = task.entryPoint,
+			//},
+			VkPipelineShaderStageCreateInfo{
+				.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+				.pNext = nullptr,
+				.stage = mesh ? VK_SHADER_STAGE_MESH_BIT_EXT : VK_SHADER_STAGE_VERTEX_BIT,
+				.module = vertModule,
+				.pName = vertStage.entryPoint,
+			},
+			VkPipelineShaderStageCreateInfo{
+				.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+				.pNext = nullptr,
+				.stage = VK_SHADER_STAGE_FRAGMENT_BIT,
+				.module = fragModule,
+				.pName = fragStage.entryPoint,
+			},
+		};
+
+
+		const VkPipelineVertexInputStateCreateInfo vertexInput{
+			.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
+		};
+		const VkPipelineInputAssemblyStateCreateInfo inputAssembly{
+			.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
+			.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
+		};
+		const VkPipelineViewportStateCreateInfo viewportState{
+			.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO,
+		};
+		const VkPipelineRasterizationStateCreateInfo rasterization{
+			.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
+			.polygonMode = VK_POLYGON_MODE_FILL,
+			.cullMode = static_cast<VkCullModeFlags>(rastState.cull == CullMode::none ? VK_CULL_MODE_NONE : VK_CULL_MODE_BACK_BIT),
+			.frontFace = VK_FRONT_FACE_CLOCKWISE,
+			.depthBiasEnable = rastState.depthBiasConstant != 0.0f ||
+						   rastState.depthBiasClamp != 0.0f ||
+						   rastState.depthBiasSlope != 0.0f,
+			.depthBiasConstantFactor = rastState.depthBiasConstant,
+			.depthBiasClamp = rastState.depthBiasClamp,
+			.depthBiasSlopeFactor = rastState.depthBiasSlope,
+			.lineWidth = 1.0f,
+		};
+		const VkPipelineMultisampleStateCreateInfo multisample{
+			.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
+			.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT,
+		};
+		const VkPipelineDepthStencilStateCreateInfo depthStencil{
+			.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
+		};
+		VkPipelineColorBlendAttachmentState colorAttachments[maxColorAttachments]{};
+		for (size_t index = 0; index < colorTargets.size(); ++index)
+		{
+			const ColorTargetDesc& target = colorTargets.at(index);
+			colorAttachments[index] = {
+				.blendEnable = target.blend.enabled,
+				.srcColorBlendFactor = toVk(target.blend.color.source),
+				.dstColorBlendFactor = toVk(target.blend.color.destination),
+				.colorBlendOp = static_cast<VkBlendOp>(target.blend.color.operation),
+				.srcAlphaBlendFactor = toVk(target.blend.alpha.source),
+				.dstAlphaBlendFactor = toVk(target.blend.alpha.destination),
+				.alphaBlendOp = static_cast<VkBlendOp>(target.blend.alpha.operation),
+				.colorWriteMask = target.writeMask,
+			};
+		}
+
+		const VkPipelineColorBlendStateCreateInfo colorBlend{
+			.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
+			.attachmentCount = (uint32_t)colorTargets.size(),
+			.pAttachments = colorTargets.size() ? colorAttachments : nullptr,
+		};
+		constexpr VkDynamicState dynamicStates[]{
+			VK_DYNAMIC_STATE_VIEWPORT_WITH_COUNT,
+			VK_DYNAMIC_STATE_SCISSOR_WITH_COUNT,
+			VK_DYNAMIC_STATE_DEPTH_TEST_ENABLE,
+			VK_DYNAMIC_STATE_DEPTH_WRITE_ENABLE,
+			VK_DYNAMIC_STATE_DEPTH_COMPARE_OP,
+			VK_DYNAMIC_STATE_STENCIL_TEST_ENABLE,
+			VK_DYNAMIC_STATE_STENCIL_OP,
+			VK_DYNAMIC_STATE_STENCIL_COMPARE_MASK,
+			VK_DYNAMIC_STATE_STENCIL_WRITE_MASK,
+			VK_DYNAMIC_STATE_STENCIL_REFERENCE,
+		};
+		const VkPipelineDynamicStateCreateInfo dynamicState{
+			.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO,
+			.dynamicStateCount = static_cast<uint32_t>(sizeof(dynamicStates) / sizeof(dynamicStates[0])),
+			.pDynamicStates = dynamicStates,
+		};
+
+		VkFormat colorFormats[maxColorAttachments]{};
+		for (size_t index = 0; index < colorTargets.size(); ++index)
+		{
+			colorFormats[index] = toVk(colorTargets.at(index).format);
+		}
+		const VkPipelineRenderingCreateInfo renderingInfo{
+			.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO,
+			.colorAttachmentCount = (uint32_t)colorTargets.size(),
+			.pColorAttachmentFormats = colorTargets.size() ? colorFormats : nullptr,
+			.depthAttachmentFormat = toVk(depthFormat),
+			.stencilAttachmentFormat = toVk(stencilFormat),
+		};
+
+		const VkPipelineLayoutCreateInfo layoutInfo
+		{
+			.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
+			.pNext = nullptr,
+			.flags = 0,
+			.setLayoutCount = 0,
+			.pSetLayouts = nullptr,
+			.pushConstantRangeCount = 0,
+			.pPushConstantRanges = nullptr,
+		};
+
+		VkPipelineLayout layout; 
+		vkCreatePipelineLayout(device->device, &layoutInfo, nullptr, &layout);
+
+		// NOTE: we skip creating a vkFlagsInfo struct as we dont have any flags
+		const VkGraphicsPipelineCreateInfo psoInfo{
+			.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
+			.pNext = &renderingInfo,
+			.stageCount = 1u + (task.code.size() ? 1u : 0u) + (fragStage.code.size() ? 1u : 0u), // Returning 0?
+			.pStages = stages,
+			.pVertexInputState = mesh ? nullptr : &vertexInput,
+			.pInputAssemblyState = mesh ? nullptr : &inputAssembly,
+			.pViewportState = &viewportState,
+			.pRasterizationState = &rasterization,
+			.pMultisampleState = &multisample,
+			.pDepthStencilState = &depthStencil,
+			.pColorBlendState = &colorBlend,
+			.pDynamicState = &dynamicState,
+			.layout = layout,
+			.basePipelineIndex = -1,
+		};
+		PSO* result = new PSO{
+			.currentState = device,
+			.bindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS,
+		};
+
+		if (vkCreateGraphicsPipelines(device->device, VK_NULL_HANDLE, 1, &psoInfo, nullptr, &result->pso) != VK_SUCCESS)
+		{
+			delete result;
+			return nullptr;
+		}
+
+		vkDestroyShaderModule(device->device, vertModule, nullptr);
+		vkDestroyShaderModule(device->device, fragModule, nullptr);
+		vkDestroyPipelineLayout(device->device, layout, nullptr);
+
+		return result;
+	}
+
 	PSO* createGraphicsPSO(Device* device, GraphicsPSODesc graphicsDesc)
 	{
-		return createRasterPSO(device, graphicsDesc.vertex, graphicsDesc.fragment, graphicsDesc.colorTargets, graphicsDesc.depthFormat, graphicsDesc.stencilFormat, graphicsDesc.rasterization, false);
+		if (!device->bareMinMode)
+		{
+			return createRasterPSO(device, graphicsDesc.vertex, graphicsDesc.fragment, graphicsDesc.colorTargets, graphicsDesc.depthFormat, graphicsDesc.stencilFormat, graphicsDesc.rasterization, false);
+		}
+		else
+		{
+			return createRasterBareMin(device, graphicsDesc.vertex, graphicsDesc.fragment, graphicsDesc.colorTargets, graphicsDesc.depthFormat, graphicsDesc.stencilFormat, graphicsDesc.rasterization, false);
+		}
+
 	}
 
 	void bindPSO(CommandBuffer* commands, const PSO* pso)
@@ -2460,6 +2676,7 @@ namespace core {
 
 	void destroyDevice(Device* device)
 	{
+		// TODO: Only deletes up to queueArray?
 		delete device;
 	}
 

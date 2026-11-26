@@ -140,7 +140,7 @@ void mainLoop()
 	free(vertexShader.data());
 	free(fragmentShader.data());
 
-	PSO* trianglePSO = createGraphicsPSO(device, graphicsPSODesc); // also broken?
+	PSO* trianglePSO = createGraphicsPSO(device, graphicsPSODesc);
 
 	TimelinePoint latestCompletion{ .semaphore = createTimelineSemaphore(device) };
 
@@ -167,7 +167,7 @@ void mainLoop()
 		resetCommandPool(commandPool);
 
 		CommandBuffer* commands = beginCommands(commandPool);
-		const SwapchainFrame frame = acquire(commands);
+		const SwapchainFrame frame = acquire(commands); // laptop freezes here
 
 		gpuBeginRenderPass(commands, {
 			.colors = { { .renderView = frame.renderView, .load = LoadOp::clear } },
@@ -181,7 +181,7 @@ void mainLoop()
 		latestCompletion.value++;
 		submitAndPresent(device, { .commands = { commands }, .completion = latestCompletion });
 		
-		glfwSwapBuffers(window);
+		//glfwSwapBuffers(window);
 	}
 
 	waitIdle(device);
@@ -191,7 +191,7 @@ void mainLoop()
 	destroyTimelineSemaphore(latestCompletion.semaphore);
 	destroyPso(trianglePSO);
 
-	destroyDevice(device);
+	destroyDevice(device); // Memory leak
 }
 
 
