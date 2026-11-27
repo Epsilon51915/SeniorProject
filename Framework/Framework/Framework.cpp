@@ -5,7 +5,6 @@
 #include "Camera.h"
 #include "ECS.h"
 
-using namespace std;
 
 //test ecs declaration
 void testECS();
@@ -99,17 +98,84 @@ void createWindow()
 	glfwInit();
 	glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
 	window = glfwCreateWindow(1280, 720, "Framework", NULL, NULL);
+	// Set up input callbacks and captures the cursor for camera controls
+	//glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+	glfwSetCursorPosCallback(window, mouseCallback);
+	//TODO: glfwSetScrollCallback(window, scrollCallback);
+
 	mainLoop();
 }
 
 void mainLoop()
 {
+
+	Device* device = createDevice({.window = window, .swapchainFormat = Format::bgra8_srgb }).newDevice;
+
+	std::vector<char> vertexShader = readShader("vert.spv", "");
+	std::vector<char> fragmentShader = readShader("frag.spv", "");
+
+	GraphicsPSODesc graphicsPSODesc;
+	graphicsPSODesc.vertex.code = vertexShader;
+	graphicsPSODesc.vertex.entryPoint = "vertMain";
+
+	graphicsPSODesc.fragment.code = fragmentShader;
+	graphicsPSODesc.fragment.entryPoint = "fragMain";
+
+	graphicsPSODesc.colorTargets = { { .format = Format::bgra8_srgb } };
+
+
+	PSO* trianglePSO = createGraphicsPSO(device, graphicsPSODesc); // also broken?
+
+	TimelinePoint latestCompletion{ .semaphore = createTimelineSemaphore(device) };
+
+	//// create command buffers
+	CommandPool* commandPools[] = { createCommandPool(device), createCommandPool(device) };
+
 	while (!glfwWindowShouldClose(window))
 	{
-		glfwSwapBuffers(window);
 		glfwPollEvents();
+		// Temp: Testing camera
+		glm::vec3 p = camera.getPosition();
+		glm::vec3 f = camera.getFront();
+		printf("Position: %.2f, %.2f, %.2f | Front:  %.2f, %.2f, %.2f \n", p.x, p.y, p.z, f.x, f.y, f.z);
+
+		//Esc to quit now since cursor is now captured for camera
+		if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
+		{
+			glfwSetWindowShouldClose(window, true);
+		}
+
+		if (latestCompletion.value >= 2)
+			waitTimeline({ .semaphore = latestCompletion.semaphore, .value = latestCompletion.value - 1 });
+		CommandPool* commandPool = commandPools[latestCompletion.value % 2];
+		resetCommandPool(commandPool);
+
+		CommandBuffer* commands = beginCommands(commandPool);
+		const SwapchainFrame frame = acquire(commands);
+
+		gpuBeginRenderPass(commands, {
+			.colors = { { .renderView = frame.renderView, .load = LoadOp::clear } },
+			});
+
+		bindPSO(commands, trianglePSO);
+		draw(commands, {}, 3);
+		gpuEndRenderPass(commands);
+		endCommands(commands);
+
+		latestCompletion.value++;
+		submitAndPresent(device, { .commands = { commands }, .completion = latestCompletion });
+		
+		glfwSwapBuffers(window);
 	}
-	cleanUp();
+
+	waitIdle(device);
+
+	destroyCommandPool(commandPools[1]);
+	destroyCommandPool(commandPools[0]);
+	destroyTimelineSemaphore(latestCompletion.semaphore);
+	destroyPso(trianglePSO);
+
+	destroyDevice(device);
 }
 
 //TEST
@@ -130,3 +196,27 @@ void cleanUp()
 	glfwDestroyWindow(window);
 	glfwTerminate();
 }
+
+// Handle mouse movements for camera rotation
+//Manages state, persistence and coordinate transformations for rotation control
+void mouseCallback(GLFWwindow* window, double xpos, double ypos)
+{
+	if (firstMouse)
+	{
+		lastX = xpos;
+		lastY = ypos;
+		firstMouse = false;
+	}
+	float xoffset = xpos - lastX;
+	float yoffset = lastY - ypos; // Y ranges bottom to top so its reversed
+
+	lastX = xpos;
+	lastY = ypos;
+
+	camera.processMouseMovement(xoffset, yoffset);
+}
+// Handles the scrollwheel on the mouse
+// void scrollCallback(GLFWwindow* window, double xoffset, double yoffset)
+//{
+	// TODO: camera.processMouseScroll(yoffset);
+//}

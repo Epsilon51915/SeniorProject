@@ -14,8 +14,11 @@
   "ExpandedNodes": [
     "",
     "\\cmake",
-    "\\Framework"
+    "\\Framework",
+    "\\out",
+    "\\out\\build",
+    "\\Slang Shaders"
   ],
-  "SelectedNode": "\\vcpkg-configuration.json",
+  "SelectedNode": "\\Framework\\Framework.h",
   "PreviewInSolutionExplorer": false
 }

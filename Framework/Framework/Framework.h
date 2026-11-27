@@ -3,11 +3,12 @@
 
 #pragma once
 
+#define DOCTEST_CONFIG_IMPLEMENT
 #include <iostream>
-// This is needed to tell GLFW we are using Vulkan
-#define GLFW_INCLUDE_VULKAN
-#include <GLFW/glfw3.h>
-#include <glm/glm.hpp>
+#include <doctest/doctest.h>
+#include "Camera.h"
+#include "ECS.h"
+#include "RenderCoreV2.hpp"
 
 
 
