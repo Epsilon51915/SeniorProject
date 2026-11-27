@@ -1,6 +1,8 @@
 ﻿# CMakeList.txt : CMake project for Framework, include source and define
 # project specific logic here.
 #
+# CMake dependency management
+include(FetchContent)
 
 # Add source to this project's executable.
 add_executable (Framework "Framework.cpp" "ECS.cpp" "Framework.h")
@@ -9,5 +11,15 @@ if (CMAKE_VERSION VERSION_GREATER 3.12)
   set_property(TARGET Framework PROPERTY CXX_STANDARD 20)
 endif()
 
-# TODO: Add tests and install targets if needed
-target_link_libraries("Framework" PRIVATE VulkanCppModule glfw glm::glm)
+# Flecs dependency
+FetchContent_Declare (Flecs 
+GIT_REPOSITORY https://github.com/SanderMertens/flecs.git 
+GIT_TAG v4.2.0
+)
+# Configure Flecs
+FetchContent_MakeAvailable(Flecs)
+
+# Link Flecs
+target_link_libraries(Framework PRIVATE flecs::flecs_static)
+
+# TODO: Add tests and install targets if needed.
