@@ -185,7 +185,7 @@ void mainLoop()
 void testECS() {
 	registry ecs;
 	EntityID cameraEntity = ecs.createEntity();
-	std::cout << "CamID: " << cameraEntity << endl;
+	std::cout << "CamID: " << cameraEntity << std::endl;
 
 }
 //TEST
