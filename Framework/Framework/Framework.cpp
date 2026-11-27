@@ -111,6 +111,8 @@ void mainLoop()
 
 	Device* device = createDevice({.window = window, .swapchainFormat = Format::bgra8_srgb }).newDevice;
 
+	// Turn into entity with Material component, add params as necessary within component
+	// SEE ECS.h line 26 && ECS.cpp line 30
 	std::vector<char> vertexShader = readShader("vert.spv", "");
 	std::vector<char> fragmentShader = readShader("frag.spv", "");
 

@@ -13,10 +13,31 @@
 
 // }
 
+// Add other components here
+registry::registry()
+{
+	world.component<MeshInfo>();
+	world.component<Material>();
+}
+
 // Create a new entity and get its ID.
 EntityID registry::createEntity() 
 {
 	flecs::entity e = world.entity();
+	return e.id();
+}
+
+EntityID registry::createMesh()
+{
+	flecs::entity e = world.entity();
+	e.add<MeshInfo>();
+	return e.id();
+}
+
+EntityID registry::createMaterial()
+{
+	flecs::entity e = world.entity();
+	e.add<Material>();
 	return e.id();
 }
 
@@ -83,3 +104,26 @@ std::vector<EntityID> registry::getChildren(EntityID parent) const
 // TODO Get all parent entities
 // TODO Search for entities by name
 // TODO implement components, add/remove
+
+void registry::collectionSystem()
+{
+	// Gets all entities with Material component
+	auto q = world.query_builder<Material>();
+
+	// Runs for each entity with Material component
+	q.each([this](flecs::entity e)	
+	{
+		// All children should have meshes, which should contain positional info, send to Roman
+		std::vector<EntityID> children = getChildren(e);
+		for (int i = 0; i < children.size(); ++i)
+		{
+			// Use ID to find each individual child
+
+			// Use child's MeshInfo component to find position
+
+			// Send all data to Roman for drawing
+		}
+	});
+}
+
+// ASSIMP FOR MODEL LOADING
